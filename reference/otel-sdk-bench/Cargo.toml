@@ -1,0 +1,18 @@
+[package]
+name = "otel-sdk-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone: not part of the nanometer workspace.
+[workspace]
+
+[dependencies]
+opentelemetry = { version = "=0.33.1", features = ["metrics", "experimental_metrics_bound_instruments"] }
+opentelemetry_sdk = { version = "=0.33.1", features = ["metrics", "experimental_metrics_custom_reader", "experimental_metrics_bound_instruments", "spec_unstable_metrics_views"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = 1

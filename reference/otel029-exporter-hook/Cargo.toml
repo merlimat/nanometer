@@ -1,0 +1,16 @@
+[package]
+name = "otel029-exporter-hook"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone: not part of the nanometer workspace.
+[workspace]
+
+[dependencies]
+opentelemetry = { version = "=0.29.0", features = ["metrics"] }
+opentelemetry_sdk = { version = "=0.29.0", features = ["metrics"] }
+opentelemetry-proto = { version = "=0.29.0", default-features = false, features = ["gen-tonic-messages", "metrics"] }
+
+[profile.release]
+opt-level = 3
