@@ -17,7 +17,7 @@ Working prototypes from the design phase: `reference/` (standalone crates, see b
 - Libraries using nanometer depend only on the `opentelemetry` API crate where
   possible; SDK-level wiring (histogram export, see below) happens once in the app.
 
-## API (decided)
+## API (draft, not decided)
 
 ```rust
 let meter = nanometer::Meter::new(&provider, "my-lib");   // OTel provider + scope name

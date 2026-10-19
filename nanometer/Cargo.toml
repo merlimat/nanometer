@@ -1,0 +1,15 @@
+[package]
+name = "nanometer"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+opentelemetry = { version = "=0.33.1", default-features = false, features = ["metrics"] }
+
+[dev-dependencies]
+opentelemetry_sdk = { version = "=0.33.1", features = ["metrics", "experimental_metrics_custom_reader"] }
+
+[features]
+default = ["internal-logs"]
+# Warnings (e.g. conflicting metric definitions) through OTel's internal logging.
+internal-logs = ["opentelemetry/internal-logs"]
