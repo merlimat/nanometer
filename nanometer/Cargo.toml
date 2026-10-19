@@ -2,6 +2,7 @@
 name = "nanometer"
 version = "0.0.0"
 edition = "2024"
+license = "Apache-2.0"
 
 [dependencies]
 opentelemetry = { version = "=0.33.1", default-features = false, features = ["metrics"] }
