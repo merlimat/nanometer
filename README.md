@@ -13,11 +13,10 @@ on io_uring, and it also works from ordinary multi-threaded code.
 
 - **A few nanoseconds per record.** No locks, no read-modify-write atomics, no
   allocation and no attribute handling on the record path. A counter `add` is a load
-  and a store on a cell only its thread writes. The targets, from the design
-  prototypes, are about 1–2 ns per counter add and 5 ns per histogram record, flat
-  as cores are added. For comparison, an OTel SDK 0.33.1 counter `add` with three
-  attributes took 167 ns on one thread and 458 ns with two threads on one series, on
-  a 2-vCPU Xeon VM ([measurements](docs/design-notes.md)).
+  and a store on a cell only its thread writes: 1.1–1.3 ns on 1 to 18 threads,
+  where the OTel SDK's `Counter::add` takes 44 ns on one thread and 2.4 µs on 18
+  ([Performance](#performance)). The histogram target, from the design prototypes,
+  is about 5 ns per record.
 - **Your OTel setup, unchanged.** A library takes an OTel `MeterProvider` and a scope
   name; the app keeps its exporter. Libraries depend only on the `opentelemetry` API
   crate.
@@ -34,7 +33,7 @@ on io_uring, and it also works from ordinary multi-threaded code.
 Early: the API is a draft and will change.
 
 - [x] Process-wide registry, `LocalCounter`, export through an observable counter.
-- [ ] Benchmark harness reporting ns/op and allocs/op.
+- [x] Benchmark harness reporting ns/op and allocs/op.
 - [ ] `LocalHistogram`. Export is the open problem: OTel has no asynchronous
   histogram, and the Rust SDK no longer lets anything inject aggregated data
   (`MetricProducer` was removed in 0.26, and since 0.30 an exporter can't modify
@@ -98,12 +97,34 @@ let provider = SdkMeterProvider::builder()
 
 To use the global provider instead, pass `&*opentelemetry::global::meter_provider()`.
 
+## Performance
+
+Measured with `cargo bench` ([benches/record.rs](nanometer/benches/record.rs)) on an
+Apple M5 Pro (18 cores of two kinds, 6 + 12) under macOS, with Rust 1.99, fat LTO and
+one codegen unit. Every thread records into the same series, with three attributes,
+through its own handle. Each figure is the mean time per call over the threads, as a
+range over four runs. No case allocates.
+
+| ns per call | 1 thread | 2 threads | 18 threads |
+|---|---:|---:|---:|
+| nanometer `LocalCounter::add` | 1.1–1.3 | 1.1–1.3 | 1.1–1.2 |
+| `AtomicU64::fetch_add` on one shared counter | 1.6 | 11–12 | 122–123 |
+| OTel SDK bound counter `add` | 1.8–1.9 | 18–19 | 150–155 |
+| OTel SDK `Counter::add` | 44–46 | 158–161 | 2,370–2,450 |
+| Empty loop, not subtracted | 0.2–0.4 | 0.2–0.3 | 0.2–0.3 |
+
+On one thread the SDK's bound counter comes close, since its `add` is a single
+uncontended atomic add. As threads are added, their atomic adds all hit the same
+cache line, while each nanometer handle writes a cell of its own. The 18-thread runs
+mix both kinds of core.
+
 ## Building
 
 ```sh
 cargo test
 cargo clippy --all-targets
 cargo fmt --check
+cargo bench
 ```
 
 Under Miri, the integration tests need clock access, because the SDK reads the time:

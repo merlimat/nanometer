@@ -8,7 +8,16 @@ license = "Apache-2.0"
 opentelemetry = { version = "=0.33.1", default-features = false, features = ["metrics"] }
 
 [dev-dependencies]
-opentelemetry_sdk = { version = "=0.33.1", features = ["metrics", "experimental_metrics_custom_reader"] }
+opentelemetry_sdk = { version = "=0.33.1", features = [
+    "metrics",
+    "experimental_metrics_custom_reader",
+    # Bound counters, the SDK's fastest path, as a baseline in benches/record.rs.
+    "experimental_metrics_bound_instruments",
+] }
+
+[[bench]]
+name = "record"
+harness = false
 
 [features]
 default = ["internal-logs"]

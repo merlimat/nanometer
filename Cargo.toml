@@ -2,3 +2,8 @@
 members = ["nanometer"]
 exclude = ["reference"]
 resolver = "3"
+
+# Benchmarks, per the conventions in CLAUDE.md.
+[profile.bench]
+lto = "fat"
+codegen-units = 1
