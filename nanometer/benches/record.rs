@@ -211,4 +211,18 @@ fn main() {
         let mut value = spread();
         move || bound.record(value())
     });
+    // The SDK way to time an operation: seconds as f64, the same bounds.
+    let sdk_latency = provider
+        .meter("bench-sdk")
+        .f64_histogram("timed")
+        .with_unit("s")
+        .with_boundaries(BOUNDS.iter().map(|&b| b as f64 / 1e6).collect())
+        .build();
+    case("OTel SDK bound latency timer", &threads, SLOW, || {
+        let bound = sdk_latency.bind(&attrs);
+        move || {
+            let start = black_box(Instant::now());
+            bound.record(start.elapsed().as_secs_f64());
+        }
+    });
 }
