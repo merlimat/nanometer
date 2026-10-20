@@ -44,7 +44,8 @@ Early: the API is a draft and will change.
   [merlimat/opentelemetry-rust](https://github.com/merlimat/opentelemetry-rust/tree/metric-producer-0.33.1);
   see [Exporting histograms](#exporting-histograms).
 - [ ] Delta temporality for histograms: they export as cumulative.
-- [ ] Up-down counters, gauges, `Send + Sync` shared handles and a cardinality cap.
+- [x] `LocalUpDownCounter`, exported through observable up-down counters.
+- [ ] Gauges, `Send + Sync` shared handles and a cardinality cap.
 
 ## Example
 
@@ -68,6 +69,16 @@ let bytes_in = meter.counter(BYTES_IN, &attrs);
 // The hot path: a load and a store on this thread's own cell.
 requests.add(1);
 bytes_in.add(512);
+```
+
+Up-down counters also go down, for values such as open connections. The exported
+value is the sum over all instances, so a decrement can come from another core than
+the increment:
+
+```rust
+let connections = meter.up_down_counter("connections", &attrs);
+connections.add(1);
+connections.add(-1);
 ```
 
 Histograms take bucket bounds, or a preset. A latency histogram has its buckets
@@ -129,7 +140,8 @@ To use the global provider instead, pass `&*opentelemetry::global::meter_provide
 
 ### Exporting histograms
 
-Counters export through observable instruments, with any provider. Histograms
+Counters and up-down counters export through observable instruments, with any
+provider. Histograms
 export through `nanometer::Producer`, an OTel `MetricProducer` that the app registers
 with its reader, once. That takes the `sdk` feature, in the app only; libraries keep
 the default features:

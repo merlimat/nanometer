@@ -184,8 +184,8 @@ impl HistogramMetric {
                 // Not registered, so never exported.
                 HistogramMetric::new(meter.scope, def)
             }
-            Some(Entry::Counter(_)) => {
-                registry::warn_conflict(meter.scope, def.name, &"a counter", &def);
+            Some(Entry::Counter(metric)) => {
+                registry::warn_conflict(meter.scope, def.name, &metric.kind(), &def);
                 // Not registered, so never exported.
                 HistogramMetric::new(meter.scope, def)
             }
