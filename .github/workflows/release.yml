@@ -1,0 +1,32 @@
+name: Release
+
+# Pushing a tag like v0.1.0 publishes nanometer at version 0.1.0. The tag sets the
+# version: the manifest keeps 0.0.0-dev.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Set the version from the tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          sed -i "s/\"0\.0\.0-dev\"/\"$version\"/" nanometer/Cargo.toml
+          # nanometer must now carry the tag's version, or nothing is published.
+          cargo metadata --no-deps --format-version 1 |
+            jq -e --arg v "$version" '.packages[] | select(.name == "nanometer") | .version == $v'
+      # sdk-patch is a workspace helper and is never published.
+      - run: cargo publish -p nanometer --allow-dirty
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

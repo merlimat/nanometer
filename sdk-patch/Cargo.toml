@@ -1,0 +1,19 @@
+# Turns on the forked SDK's experimental_metrics_producer feature in workspace
+# builds, which nanometer's sdk feature needs (see [patch.crates-io] in the root
+# Cargo.toml). nanometer itself can't ask for it: the feature isn't in the SDK
+# release on crates.io, so naming it would break `cargo publish` and docs.rs. Apps
+# turn it on in their own opentelemetry_sdk dependency instead. Remove this crate
+# once an SDK release has MetricProducer.
+[package]
+name = "sdk-patch"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+opentelemetry_sdk = { version = "=0.33.1", default-features = false, features = [
+    "metrics",
+    "experimental_metrics_producer",
+] }

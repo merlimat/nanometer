@@ -32,6 +32,23 @@ jobs:
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
+      # Packages and builds nanometer as crates.io would see it, without the SDK
+      # patch: the manifest must not need the fork.
+      - run: cargo publish --dry-run -p nanometer
+
+  msrv:
+    name: Check on the minimum Rust version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read rust-version from nanometer/Cargo.toml
+        id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' nanometer/Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-targets --all-features
 
   test:
     name: Test (${{ matrix.os }})

@@ -1,18 +1,22 @@
 [package]
 name = "nanometer"
-version = "0.0.0"
+# The release workflow publishes the version its tag names. See
+# .github/workflows/release.yml.
+version = "0.0.0-dev"
 edition = "2024"
+rust-version = "1.99"
+description = "Metric handles for Rust whose record path costs nanoseconds, exported through OpenTelemetry"
 license = "Apache-2.0"
+repository = "https://github.com/merlimat/nanometer"
+keywords = ["metrics", "opentelemetry", "observability", "histogram", "thread-per-core"]
+categories = ["development-tools::profiling", "development-tools::debugging"]
 
 [dependencies]
 opentelemetry = { version = "=0.33.1", default-features = false, features = ["metrics"] }
 # The latency timer's clock. The default `mock` feature adds a thread-local check to
 # every `quanta::Instant::now`; the timer uses `Clock::raw`, but keep it off anyway.
 quanta = { version = "0.13", default-features = false }
-opentelemetry_sdk = { version = "=0.33.1", optional = true, default-features = false, features = [
-    "metrics",
-    "experimental_metrics_producer",
-] }
+opentelemetry_sdk = { version = "=0.33.1", optional = true, default-features = false, features = ["metrics"] }
 
 [dev-dependencies]
 opentelemetry_sdk = { version = "=0.33.1", features = [
@@ -31,5 +35,8 @@ default = ["internal-logs"]
 # Warnings (e.g. conflicting metric definitions) through OTel's internal logging.
 internal-logs = ["opentelemetry/internal-logs"]
 # Histogram export through `Producer`, an OTel SDK `MetricProducer`. Enable it in the
-# app, which owns the SDK setup; libraries need only the default features.
+# app, which owns the SDK setup; libraries need only the default features. Until an
+# SDK release has MetricProducer, the app also patches the SDK and turns on its
+# `experimental_metrics_producer` feature (README, "Exporting histograms"): naming
+# that feature here would break publishing, since the crates.io release lacks it.
 sdk = ["dep:opentelemetry_sdk"]

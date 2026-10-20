@@ -114,7 +114,14 @@ touching users):
 and constructors for the data types. nanometer's workspace patches both `opentelemetry`
 and `opentelemetry_sdk` to it (patching only the SDK pulls a second API crate), apps must
 do the same, and `nanometer::Producer` (feature `sdk`) is the producer. The upstream PR
-tracks opentelemetry-rust#2505. Never rewrite the fork branch: the patch pins it.
+is opentelemetry-rust#3802 (issue #2505). Never rewrite the fork branch: the patch pins it.
+
+nanometer's manifest must never name `experimental_metrics_producer`: `cargo publish` and
+docs.rs resolve against the crates.io SDK, which lacks it, with all features on. So the
+`sdk` feature only adds the SDK dependency; apps turn the fork's feature on in their own
+`opentelemetry_sdk` dependency, and the unpublished `sdk-patch/` workspace member does it
+for workspace builds. CI's `cargo publish --dry-run` guards this. Drop both once an SDK
+release has `MetricProducer`.
 
 The Prometheus pull exporter can't be hooked this way (and is discontinued at 0.28): push
 OTLP to a Collector or to Prometheus's OTLP receiver.
@@ -128,7 +135,6 @@ OTLP to a Collector or to Prometheus's OTLP receiver.
   `Producer` exports cumulative only, whatever the reader's temporality.
 - Series removal semantics (e.g. per-topic metrics when topics unload).
 - `f64` counters: needed, or integers only?
-- MSRV and edition.
 
 ## Suggested first steps
 
@@ -146,6 +152,12 @@ OTLP to a Collector or to Prometheus's OTLP receiver.
 - Verify claims about OTel behavior against SDK source at the exact release tag, and with
   a small test where cheap. The OTel Rust API has changed a lot between minor versions.
 - Pin OTel versions exactly (`=0.33.1`) until the export path is settled.
+- Edition 2024, `rust-version = "1.99"` (the stable of the time, as in encina; user,
+  Oct 20). CI's MSRV job checks it.
+- Releases, as in encina: the manifest keeps `0.0.0-dev`, and pushing a tag `vX.Y.Z`
+  runs `.github/workflows/release.yml`, which writes that version and publishes
+  `nanometer` with the `CARGO_REGISTRY_TOKEN` secret. Pushing a tag publishes to
+  crates.io: only when the user says so.
 
 ## reference/ (standalone crates, each with its own `[workspace]`)
 
