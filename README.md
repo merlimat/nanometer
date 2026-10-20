@@ -13,10 +13,10 @@ on io_uring, and it also works from ordinary multi-threaded code.
 
 - **A few nanoseconds per record.** No locks, no read-modify-write atomics, no
   allocation and no attribute handling on the record path. A counter `add` is a load
-  and a store on a cell only its thread writes: 1.1–1.3 ns on 1 to 18 threads,
-  where the OTel SDK's `Counter::add` takes 45 ns on one thread and 2.4–2.5 µs on 18.
-  A histogram `record` takes 2.5–3.6 ns, against 11 ns and 660 ns for the SDK's bound
-  histogram ([Performance](#performance)).
+  and a store on a cell only its thread writes: 1.1–1.2 ns on 1 to 18 threads,
+  where the OTel SDK's `Counter::add` takes 46 ns on one thread and 2.5–2.6 µs on 18.
+  A histogram `record` takes 2.4–3.4 ns, against 11 ns and 590–670 ns for the SDK's
+  bound histogram, and timing a latency 2.7–3.4 ns ([Performance](#performance)).
 - **Your OTel setup, unchanged.** A library takes an OTel `MeterProvider` and a scope
   name; the app keeps its exporter. Libraries depend only on the `opentelemetry` API
   crate.
@@ -71,7 +71,9 @@ bytes_in.add(512);
 ```
 
 Histograms take bucket bounds, or a preset. A latency histogram has its buckets
-built in, 1-2-5 from 10 µs to 10 s, exports in seconds, and comes with a timer:
+built in, 1-2-5 from 10 µs to 10 s, exports in seconds, and comes with a timer that
+reads the CPU's counter through [quanta](https://docs.rs/quanta). The first latency
+handle in a process calibrates that clock, which blocks for 10 to 200 ms, once:
 
 ```rust
 use nanometer::HistogramDef;
@@ -166,14 +168,14 @@ range over three runs. No case allocates.
 
 | ns per call | 1 thread | 2 threads | 18 threads |
 |---|---:|---:|---:|
-| nanometer `LocalCounter::add` | 1.2–1.3 | 1.2–1.3 | 1.1–1.2 |
-| `AtomicU64::fetch_add` on one shared counter | 1.6 | 11–12 | 95–98 |
-| OTel SDK bound counter `add` | 1.8 | 18–63 | 150–410 |
-| OTel SDK `Counter::add` | 45–46 | 160 | 2,370–2,510 |
-| nanometer `LocalHistogram::record` | 2.5–2.6 | 2.5 | 3.4–3.6 |
-| OTel SDK bound histogram `record` | 10.9–11.1 | 49–51 | 657–674 |
-| nanometer latency timer, start and stop | 35–37 | 37–40 | 41–42 |
-| OTel SDK bound histogram in seconds, timed with `Instant::now()` | 49–52 | 194–210 | 2,090–2,240 |
+| nanometer `LocalCounter::add` | 1.1–1.2 | 1.1–1.2 | 1.1 |
+| `AtomicU64::fetch_add` on one shared counter | 1.5 | 11 | 131–134 |
+| OTel SDK bound counter `add` | 1.8 | 17 | 156–159 |
+| OTel SDK `Counter::add` | 46 | 157–159 | 2,500–2,640 |
+| nanometer `LocalHistogram::record` | 2.4–2.5 | 2.5 | 3.4 |
+| OTel SDK bound histogram `record` | 10.8–10.9 | 48–50 | 589–668 |
+| nanometer latency timer, start and stop | 2.7–2.9 | 2.7–2.9 | 3.3–3.4 |
+| OTel SDK bound histogram in seconds, timed with `Instant::now()` | 47–49 | 188–204 | 2,030–2,210 |
 | Empty loop, not subtracted | 0.2 | 0.2 | 0.2 |
 
 The histograms have the latency preset's 19 bounds, with values spread over the
@@ -183,9 +185,10 @@ On one thread the SDK's bound counter comes close, since its `add` is a single
 uncontended atomic add. As threads are added, their atomic adds all hit the same
 cache line, while each nanometer handle writes cells of its own. The SDK's bound
 histogram also takes a lock per series. Contended runs vary the most from run to run,
-and the 18-thread runs mix both kinds of core. A timer's cost is mostly its two
-`Instant::now()` calls: nanometer's record adds the 2.5 ns above, while the SDK's adds
-its locked `f64` record, which is what grows with threads.
+and the 18-thread runs mix both kinds of core. nanometer's timer reads the CPU's
+counter twice, for well under a nanosecond, and records the ticks against bounds
+converted to ticks once; the SDK way pays two `Instant::now()` calls, about 25 ns
+here, plus its locked `f64` record, which is what grows with threads.
 
 ## Building
 

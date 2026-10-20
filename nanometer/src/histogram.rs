@@ -69,9 +69,9 @@ pub struct HistogramDef {
     pub(crate) unit: Option<&'static str>,
     pub(crate) description: Option<&'static str>,
     pub(crate) buckets: &'static [u64],
-    /// Recorded values per exported unit: 1 exports the integers as they are, while
-    /// latencies are recorded in µs and exported in seconds.
-    pub(crate) per_unit: u64,
+    /// A latency histogram: `buckets` are in µs, handles record clock ticks against
+    /// them converted to ticks, and the export is in seconds.
+    pub(crate) latency: bool,
 }
 
 impl HistogramDef {
@@ -83,7 +83,7 @@ impl HistogramDef {
             unit: None,
             description: None,
             buckets: DEFAULT_BUCKETS,
-            per_unit: 1,
+            latency: false,
         }
     }
 
@@ -97,8 +97,8 @@ impl HistogramDef {
         HistogramDef::new(name).buckets(COUNTS_BUCKETS)
     }
 
-    /// Recorded in µs, exported in seconds.
-    pub(crate) const fn micros_as_seconds(
+    /// A latency histogram with `buckets` in µs, exported in seconds.
+    pub(crate) const fn latency(
         name: &'static str,
         description: Option<&'static str>,
         buckets: &'static [u64],
@@ -108,7 +108,7 @@ impl HistogramDef {
             unit: Some("s"),
             description,
             buckets,
-            per_unit: 1_000_000,
+            latency: true,
         }
     }
 
@@ -172,11 +172,17 @@ impl HistogramMetric {
     fn get_or_register(meter: &Meter, def: HistogramDef) -> Arc<HistogramMetric> {
         let mut registry = registry::lock();
         match registry.get(&(meter.scope, def.name)) {
-            Some(Entry::Histogram(metric)) => {
+            // Latency and plain histograms count in different units, so they don't mix.
+            Some(Entry::Histogram(metric)) if metric.def.latency == def.latency => {
                 if metric.def != def {
                     registry::warn_conflict(meter.scope, def.name, &metric.def, &def);
                 }
                 Arc::clone(metric)
+            }
+            Some(Entry::Histogram(metric)) => {
+                registry::warn_conflict(meter.scope, def.name, &metric.def, &def);
+                // Not registered, so never exported.
+                HistogramMetric::new(meter.scope, def)
             }
             Some(Entry::Counter(_)) => {
                 registry::warn_conflict(meter.scope, def.name, &"a counter", &def);
@@ -209,12 +215,37 @@ pub struct LocalHistogram {
 }
 
 impl LocalHistogram {
+    // Cold: keeps setup out of the code around the record path.
+    #[inline(never)]
     pub(crate) fn new(meter: &Meter, def: HistogramDef, attributes: &[KeyValue]) -> Self {
         let metric = HistogramMetric::get_or_register(meter, def);
+        // The registered definition, which may not be `def`.
+        LocalHistogram::with_metric(&metric, metric.def.buckets, attributes)
+    }
+
+    /// A latency histogram, recording clock ticks against `buckets`, the definition's
+    /// bounds in ticks.
+    // Cold: keeps setup out of the code around the record path.
+    #[inline(never)]
+    pub(crate) fn latency(
+        meter: &Meter,
+        def: HistogramDef,
+        attributes: &[KeyValue],
+        buckets: &'static [u64],
+    ) -> Self {
+        let metric = HistogramMetric::get_or_register(meter, def);
+        LocalHistogram::with_metric(&metric, buckets, attributes)
+    }
+
+    fn with_metric(
+        metric: &HistogramMetric,
+        buckets: &'static [u64],
+        attributes: &[KeyValue],
+    ) -> Self {
+        debug_assert_eq!(buckets.len(), metric.def.buckets.len());
         LocalHistogram {
             instance: Instance::new(&metric.series, attributes),
-            // The registered definition, which may not be `def`.
-            buckets: metric.def.buckets,
+            buckets,
             name: metric.def.name,
             _single_writer: PhantomData,
         }
@@ -223,10 +254,21 @@ impl LocalHistogram {
     /// Records `value`.
     #[inline]
     pub fn record(&self, value: u64) {
+        self.add(value, value);
+    }
+
+    /// Records clock ticks, adding `ticks >> sum_shift` to the sum.
+    #[inline]
+    pub(crate) fn record_ticks(&self, ticks: u64, sum_shift: u32) {
+        self.add(ticks, ticks >> sum_shift);
+    }
+
+    #[inline(always)]
+    fn add(&self, value: u64, sum: u64) {
         let cells = self.instance.block().cells();
         let bucket = self.buckets.partition_point(|&bound| bound < value);
         bump(&cells[bucket], 1);
-        bump(&cells[self.buckets.len() + 1], value);
+        bump(&cells[self.buckets.len() + 1], sum);
     }
 }
 

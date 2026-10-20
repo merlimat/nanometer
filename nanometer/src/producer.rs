@@ -24,6 +24,7 @@ use opentelemetry_sdk::metrics::data::{
 use opentelemetry_sdk::metrics::{MetricProducer, Temporality};
 
 use crate::histogram::HistogramMetric;
+use crate::latency;
 use crate::registry::{self, Entry};
 
 /// Exports nanometer's histograms through an OTel SDK reader.
@@ -83,12 +84,14 @@ impl MetricProducer for Producer {
 /// The metric's series as one cumulative histogram, or `None` if it has none yet.
 fn export(histogram: &HistogramMetric, now: SystemTime) -> Option<Metric> {
     let def = &histogram.def;
-    let per_unit = def.per_unit as f64;
-    let bounds: Vec<f64> = def.buckets.iter().map(|&b| b as f64 / per_unit).collect();
-    let data = if def.per_unit == 1 {
-        AggregatedMetrics::U64(points(histogram, &bounds, now, |sum| sum)?.into())
+    let data = if def.latency {
+        // Bounds in µs, sums in units of the clock's ticks: both to seconds.
+        let bounds: Vec<f64> = def.buckets.iter().map(|&us| us as f64 / 1e6).collect();
+        let seconds = latency::seconds_per_sum_unit();
+        AggregatedMetrics::F64(points(histogram, &bounds, now, |sum| sum as f64 * seconds)?.into())
     } else {
-        AggregatedMetrics::F64(points(histogram, &bounds, now, |sum| sum as f64 / per_unit)?.into())
+        let bounds: Vec<f64> = def.buckets.iter().map(|&b| b as f64).collect();
+        AggregatedMetrics::U64(points(histogram, &bounds, now, |sum| sum)?.into())
     };
     Some(Metric::new(
         def.name,
