@@ -29,7 +29,7 @@ use std::thread;
 use std::time::Instant;
 use std::{env, fs};
 
-use nanometer::Meter;
+use nanometer::{HistogramDef, Meter};
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::MeterProvider as _;
 use opentelemetry_sdk::metrics::{ManualReader, SdkMeterProvider};
@@ -177,5 +177,38 @@ fn main() {
     case("OTel SDK Counter::add", &threads, SLOW, || {
         let (sdk, attrs) = (&sdk, &attrs);
         move || sdk.add(1, black_box(attrs))
+    });
+
+    // Histograms: the latency preset's 19 bounds (10 µs to 10 s, in µs), with values
+    // spread over the first 12 buckets.
+    const BOUNDS: &[u64] = &[
+        10, 20, 50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000, 200_000,
+        500_000, 1_000_000, 2_000_000, 5_000_000, 10_000_000,
+    ];
+    let spread = || {
+        let mut v = 0u64;
+        move || {
+            v = (v + 7_919) % 30_000;
+            black_box(v)
+        }
+    };
+    case("nanometer LocalHistogram::record", &threads, FAST, || {
+        let histogram = meter.histogram(HistogramDef::new("latency").buckets(BOUNDS), &attrs);
+        let mut value = spread();
+        move || histogram.record(value())
+    });
+    case("nanometer LocalLatency timer", &threads, MEDIUM, || {
+        let latency = meter.latency("timed", &attrs);
+        move || drop(black_box(latency.start()))
+    });
+    let sdk_histogram = provider
+        .meter("bench-sdk")
+        .u64_histogram("latency")
+        .with_boundaries(BOUNDS.iter().map(|&b| b as f64).collect())
+        .build();
+    case("OTel SDK bound histogram record", &threads, SLOW, || {
+        let bound = sdk_histogram.bind(&attrs);
+        let mut value = spread();
+        move || bound.record(value())
     });
 }

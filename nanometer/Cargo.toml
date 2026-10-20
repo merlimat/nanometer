@@ -6,6 +6,10 @@ license = "Apache-2.0"
 
 [dependencies]
 opentelemetry = { version = "=0.33.1", default-features = false, features = ["metrics"] }
+opentelemetry_sdk = { version = "=0.33.1", optional = true, default-features = false, features = [
+    "metrics",
+    "experimental_metrics_producer",
+] }
 
 [dev-dependencies]
 opentelemetry_sdk = { version = "=0.33.1", features = [
@@ -23,3 +27,6 @@ harness = false
 default = ["internal-logs"]
 # Warnings (e.g. conflicting metric definitions) through OTel's internal logging.
 internal-logs = ["opentelemetry/internal-logs"]
+# Histogram export through `Producer`, an OTel SDK `MetricProducer`. Enable it in the
+# app, which owns the SDK setup; libraries need only the default features.
+sdk = ["dep:opentelemetry_sdk"]

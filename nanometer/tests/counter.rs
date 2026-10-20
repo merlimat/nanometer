@@ -15,52 +15,24 @@
 //! Counters exported through an SDK `ManualReader`. The registry is process-wide and
 //! tests run in parallel, so each test uses its own scope.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Barrier, Weak};
-use std::thread;
-use std::time::Duration;
+mod common;
 
+use std::collections::HashMap;
+use std::sync::Barrier;
+use std::thread;
+
+use common::Reader;
 use nanometer::{CounterDef, Meter};
 use opentelemetry::KeyValue;
-use opentelemetry_sdk::error::OTelSdkResult;
-use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData, ResourceMetrics};
-use opentelemetry_sdk::metrics::reader::MetricReader;
-use opentelemetry_sdk::metrics::{
-    InstrumentKind, ManualReader, Pipeline, SdkMeterProvider, Temporality,
-};
-
-/// `with_reader` takes the reader by value; this keeps a handle to collect with.
-#[derive(Clone, Debug)]
-struct Reader(Arc<ManualReader>);
-
-impl MetricReader for Reader {
-    fn register_pipeline(&self, pipeline: Weak<Pipeline>) {
-        self.0.register_pipeline(pipeline)
-    }
-    fn collect(&self, rm: &mut ResourceMetrics) -> OTelSdkResult {
-        self.0.collect(rm)
-    }
-    fn force_flush(&self) -> OTelSdkResult {
-        self.0.force_flush()
-    }
-    fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {
-        self.0.shutdown_with_timeout(timeout)
-    }
-    fn temporality(&self, kind: InstrumentKind) -> Temporality {
-        self.0.temporality(kind)
-    }
-}
+use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+use opentelemetry_sdk::metrics::{ManualReader, SdkMeterProvider, Temporality};
 
 fn setup(temporality: Temporality) -> (SdkMeterProvider, Reader) {
-    let reader = Reader(Arc::new(
+    common::setup(
         ManualReader::builder()
             .with_temporality(temporality)
             .build(),
-    ));
-    let provider = SdkMeterProvider::builder()
-        .with_reader(reader.clone())
-        .build();
-    (provider, reader)
+    )
 }
 
 struct Exported {
@@ -70,8 +42,7 @@ struct Exported {
 
 /// Runs one collection and returns the u64 sum `name` from `scope`.
 fn collect(reader: &Reader, scope: &str, name: &str) -> Exported {
-    let mut rm = ResourceMetrics::default();
-    reader.collect(&mut rm).unwrap();
+    let rm = common::collect(reader);
     let metric = rm
         .scope_metrics()
         .filter(|sm| sm.scope().name() == scope)

@@ -25,15 +25,21 @@ let meter = nanometer::Meter::new(&provider, "my-lib");   // OTel provider + sco
 let reqs = meter.counter("requests", &attrs);              // LocalCounter: !Send
 reqs.add(1);
 
-const LATENCY: HistogramDef = HistogramDef::new("latency")
-    .unit("us").buckets(&[100, 500, 1_000, 5_000]);
-let lat = meter.histogram(&LATENCY, &attrs);                // LocalHistogram: !Send
-lat.record(v);
+const DEPTH: HistogramDef = HistogramDef::new("queue_depth")
+    .unit("{item}").buckets(&[1, 10, 100, 1_000]);
+let depth = meter.histogram(DEPTH, &attrs);                 // LocalHistogram: !Send
+depth.record(v);
+let size = meter.histogram(HistogramDef::bytes("payload"), &attrs); // presets: bytes, counts
+
+let lat = meter.latency("put_latency", &attrs);            // LocalLatency: fixed 1-2-5
+let _t = lat.start();                                      // buckets 10 µs–10 s, µs in,
+                                                           // seconds out; Timer records
+                                                           // on drop (.stop/.discard)
 
 let shared = meter.shared_counter("requests", &attrs);     // Send + Sync, striped fetch_add
 ```
 
-- First arg is `impl Into<CounterDef>` / `impl Into<HistogramDef>`: `&str` gives a bare
+- First arg is `impl Into<CounterDef>` / `<HistogramDef>` / `<LatencyDef>`: `&str` gives a bare
   definition; `const` defs carry unit, description and buckets, defined in one place.
 - `meter` is nanometer's own type, NOT an extension trait on `opentelemetry::metrics::Meter`:
   OTel's `Meter` exposes no scope or identity (single private `Arc` field), and scope is
@@ -91,15 +97,24 @@ touching users):
    Forces the whole dependency tree onto 0.29; version skew is silent.
 4. Fork 0.33 with the same small change via `[patch.crates-io]`.
 
+**Chosen for v0 (user, Oct 19): option 4 now, option 1 in parallel.** The fork is branch
+`metric-producer-0.33.1` of github.com/merlimat/opentelemetry-rust: feature
+`experimental_metrics_producer` adds `MetricProducer`, `with_producer` on the readers,
+and constructors for the data types. nanometer's workspace patches both `opentelemetry`
+and `opentelemetry_sdk` to it (patching only the SDK pulls a second API crate), apps must
+do the same, and `nanometer::Producer` (feature `sdk`) is the producer. The upstream PR
+tracks opentelemetry-rust#2505. Never rewrite the fork branch: the patch pins it.
+
 The Prometheus pull exporter can't be hooked this way (and is discontinued at 0.28): push
 OTLP to a Collector or to Prometheus's OTLP receiver.
 
 ## Open decisions (ask before assuming)
 
-- Which histogram export path for v0 (see above).
 - Exponential histograms (O(1) bucket index via bit ops; maps to OTel
-  ExponentialHistogram / Prometheus native histograms) — now or later.
-- Delta temporality for injected histograms (keep previous snapshot and diff).
+  ExponentialHistogram / Prometheus native histograms): later. The presets use
+  explicit buckets.
+- Delta temporality for injected histograms (keep previous snapshot and diff). Today
+  `Producer` exports cumulative only, whatever the reader's temporality.
 - Series removal semantics (e.g. per-topic metrics when topics unload).
 - `f64` counters: needed, or integers only?
 - MSRV and edition.
