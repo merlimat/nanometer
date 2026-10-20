@@ -24,6 +24,8 @@ let meter = nanometer::Meter::new(&provider, "my-lib");   // OTel provider + sco
 
 let reqs = meter.counter("requests", &attrs);              // LocalCounter: !Send
 reqs.add(1);
+let conns = meter.up_down_counter("connections", &attrs);  // LocalUpDownCounter: i64
+conns.add(-1);
 
 const DEPTH: HistogramDef = HistogramDef::new("queue_depth")
     .unit("{item}").buckets(&[1, 10, 100, 1_000]);
@@ -39,8 +41,9 @@ let _t = lat.start();                                      // buckets 10 µs–1
 let shared = meter.shared_counter("requests", &attrs);     // Send + Sync, striped fetch_add
 ```
 
-- First arg is `impl Into<CounterDef>` / `<HistogramDef>` / `<LatencyDef>`: `&str` gives a bare
-  definition; `const` defs carry unit, description and buckets, defined in one place.
+- First arg is `impl Into<CounterDef>` / `<UpDownCounterDef>` / `<HistogramDef>` /
+  `<LatencyDef>`: `&str` gives a bare definition; `const` defs carry unit, description
+  and buckets, defined in one place.
 - `meter` is nanometer's own type, NOT an extension trait on `opentelemetry::metrics::Meter`:
   OTel's `Meter` exposes no scope or identity (single private `Arc` field), and scope is
   part of metric identity in OTLP.

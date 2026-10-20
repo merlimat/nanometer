@@ -29,7 +29,8 @@
 //! requests.add(1);
 //! ```
 //!
-//! Counters export through OTel observable instruments, with any provider. Histograms
+//! Counters and up-down counters export through OTel observable instruments, with any
+//! provider. Histograms
 //! export through [`Producer`], registered with the app's reader, which needs the
 //! `sdk` feature and an OTel SDK with `MetricProducer` support.
 
@@ -42,7 +43,7 @@ mod producer;
 mod registry;
 mod series;
 
-pub use counter::{CounterDef, LocalCounter};
+pub use counter::{CounterDef, LocalCounter, LocalUpDownCounter, UpDownCounterDef};
 pub use histogram::{HistogramDef, LocalHistogram};
 pub use latency::{LatencyDef, LocalLatency, Timer};
 #[cfg(feature = "sdk")]
@@ -79,6 +80,16 @@ impl Meter {
     /// startup, not per request.
     pub fn counter(&self, def: impl Into<CounterDef>, attributes: &[KeyValue]) -> LocalCounter {
         LocalCounter::new(self, def.into(), attributes)
+    }
+
+    /// An up-down counter instance for the calling thread. Attributes are resolved as
+    /// for [`counter`](Meter::counter).
+    pub fn up_down_counter(
+        &self,
+        def: impl Into<UpDownCounterDef>,
+        attributes: &[KeyValue],
+    ) -> LocalUpDownCounter {
+        LocalUpDownCounter::new(self, def.into(), attributes)
     }
 
     /// A histogram instance for the calling thread. Attributes are resolved as for

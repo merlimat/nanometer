@@ -18,7 +18,7 @@
 mod common;
 
 use std::collections::HashMap;
-use std::sync::Barrier;
+use std::sync::mpsc;
 use std::thread;
 
 use common::Reader;
@@ -90,20 +90,23 @@ fn instances_on_other_threads_are_summed_and_kept_after_exit() {
     let meter = Meter::new(&provider, scope);
     let local = meter.counter("requests", &[]);
     local.add(5);
-    let barrier = Barrier::new(2);
     thread::scope(|s| {
-        s.spawn(|| {
+        let meter = &meter;
+        let (recorded_tx, recorded) = mpsc::channel();
+        let (collected_tx, collected) = mpsc::channel::<()>();
+        s.spawn(move || {
             let remote = meter.counter("requests", &[]);
             remote.add(7);
-            barrier.wait();
-            barrier.wait();
+            recorded_tx.send(()).unwrap();
+            // Until the main thread has collected, or has panicked and dropped its end.
+            let _ = collected.recv();
         });
-        barrier.wait();
+        recorded.recv().unwrap();
         assert_eq!(
             collect(&reader, scope, "requests").points,
             points([(vec![], 12)])
         );
-        barrier.wait();
+        drop(collected_tx);
     });
     // The thread is gone and its instance dropped.
     assert_eq!(

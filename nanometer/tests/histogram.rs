@@ -19,7 +19,7 @@
 
 mod common;
 
-use std::sync::Barrier;
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
@@ -126,19 +126,22 @@ fn instances_on_other_threads_are_summed_and_kept_after_exit() {
     let meter = Meter::new(&provider, scope);
     let local = meter.histogram(HistogramDef::new("size").buckets(&[10]), &[]);
     local.record(5);
-    let barrier = Barrier::new(2);
     thread::scope(|s| {
-        s.spawn(|| {
+        let meter = &meter;
+        let (recorded_tx, recorded) = mpsc::channel();
+        let (collected_tx, collected) = mpsc::channel::<()>();
+        s.spawn(move || {
             let remote = meter.histogram(HistogramDef::new("size").buckets(&[10]), &[]);
             remote.record(20);
             remote.record(30);
-            barrier.wait();
-            barrier.wait();
+            recorded_tx.send(()).unwrap();
+            // Until the main thread has collected, or has panicked and dropped its end.
+            let _ = collected.recv();
         });
-        barrier.wait();
+        recorded.recv().unwrap();
         let point = &collect(&reader, scope, "size").unwrap().points[0];
         assert_eq!((point.counts.as_slice(), point.sum), (&[1, 2][..], 55.0));
-        barrier.wait();
+        drop(collected_tx);
     });
     // The thread is gone and its instance dropped.
     let point = &collect(&reader, scope, "size").unwrap().points[0];
