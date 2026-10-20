@@ -21,14 +21,32 @@
 //! let provider = opentelemetry::global::meter_provider();
 //! let meter = nanometer::Meter::new(&*provider, "my-lib");
 //!
-//! let requests = meter.counter("requests", &[KeyValue::new("op", "put")]);
+//! let attrs = [KeyValue::new("op", "put")];
+//! let requests = meter.counter("requests", &attrs);
+//! let latency = meter.latency("put_latency", &attrs);
+//!
+//! let _timer = latency.start(); // records when dropped
 //! requests.add(1);
 //! ```
+//!
+//! Counters export through OTel observable instruments, with any provider. Histograms
+//! export through [`Producer`], registered with the app's reader, which needs the
+//! `sdk` feature and an OTel SDK with `MetricProducer` support.
 
 mod arena;
 mod counter;
+mod histogram;
+mod latency;
+#[cfg(feature = "sdk")]
+mod producer;
+mod registry;
+mod series;
 
 pub use counter::{CounterDef, LocalCounter};
+pub use histogram::{HistogramDef, LocalHistogram};
+pub use latency::{LatencyDef, LocalLatency, Timer};
+#[cfg(feature = "sdk")]
+pub use producer::Producer;
 
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::MeterProvider;
@@ -36,9 +54,9 @@ use opentelemetry::metrics::MeterProvider;
 /// Creates metric handles for one instrumentation scope.
 ///
 /// Metrics live in a process-wide registry keyed by (scope, metric name): handles for the
-/// same metric share one OTel observable instrument, however many `Meter`s create them.
-/// That instrument is registered with the provider of the `Meter` that first creates the
-/// metric.
+/// same metric share one export, however many `Meter`s create them. A counter's OTel
+/// observable instrument is registered with the provider of the `Meter` that first
+/// creates the counter.
 #[derive(Clone, Debug)]
 pub struct Meter {
     scope: &'static str,
@@ -61,5 +79,21 @@ impl Meter {
     /// startup, not per request.
     pub fn counter(&self, def: impl Into<CounterDef>, attributes: &[KeyValue]) -> LocalCounter {
         LocalCounter::new(self, def.into(), attributes)
+    }
+
+    /// A histogram instance for the calling thread. Attributes are resolved as for
+    /// [`counter`](Meter::counter).
+    pub fn histogram(
+        &self,
+        def: impl Into<HistogramDef>,
+        attributes: &[KeyValue],
+    ) -> LocalHistogram {
+        LocalHistogram::new(self, def.into(), attributes)
+    }
+
+    /// A latency histogram instance for the calling thread, with a timer. Attributes are
+    /// resolved as for [`counter`](Meter::counter).
+    pub fn latency(&self, def: impl Into<LatencyDef>, attributes: &[KeyValue]) -> LocalLatency {
+        LocalLatency::new(self, def.into(), attributes)
     }
 }

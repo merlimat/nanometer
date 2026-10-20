@@ -14,9 +14,9 @@ on io_uring, and it also works from ordinary multi-threaded code.
 - **A few nanoseconds per record.** No locks, no read-modify-write atomics, no
   allocation and no attribute handling on the record path. A counter `add` is a load
   and a store on a cell only its thread writes: 1.1–1.3 ns on 1 to 18 threads,
-  where the OTel SDK's `Counter::add` takes 44 ns on one thread and 2.4 µs on 18
-  ([Performance](#performance)). The histogram target, from the design prototypes,
-  is about 5 ns per record.
+  where the OTel SDK's `Counter::add` takes 45 ns on one thread and 2.4–2.5 µs on 18.
+  A histogram `record` takes 2.5–3.6 ns, against 11 ns and 660 ns for the SDK's bound
+  histogram ([Performance](#performance)).
 - **Your OTel setup, unchanged.** A library takes an OTel `MeterProvider` and a scope
   name; the app keeps its exporter. Libraries depend only on the `opentelemetry` API
   crate.
@@ -34,10 +34,16 @@ Early: the API is a draft and will change.
 
 - [x] Process-wide registry, `LocalCounter`, export through an observable counter.
 - [x] Benchmark harness reporting ns/op and allocs/op.
-- [ ] `LocalHistogram`. Export is the open problem: OTel has no asynchronous
-  histogram, and the Rust SDK no longer lets anything inject aggregated data
-  (`MetricProducer` was removed in 0.26, and since 0.30 an exporter can't modify
-  what it exports; [details](docs/design-notes.md#4-export-plumbing-findings)).
+- [x] `LocalHistogram`, presets for latencies (with a timer), sizes in bytes and
+  counts, and export as real OTLP histograms through `Producer`. OTel has no
+  asynchronous histogram, and the Rust SDK lost its way to take aggregated data when
+  `MetricProducer` was removed in 0.26
+  ([details](docs/design-notes.md#4-export-plumbing-findings)). Until it is back
+  upstream ([#2505](https://github.com/open-telemetry/opentelemetry-rust/issues/2505)),
+  histogram export needs SDK 0.33.1 with `MetricProducer` re-added, from
+  [merlimat/opentelemetry-rust](https://github.com/merlimat/opentelemetry-rust/tree/metric-producer-0.33.1);
+  see [Exporting histograms](#exporting-histograms).
+- [ ] Delta temporality for histograms: they export as cumulative.
 - [ ] Up-down counters, gauges, `Send + Sync` shared handles and a cardinality cap.
 
 ## Example
@@ -62,6 +68,28 @@ let bytes_in = meter.counter(BYTES_IN, &attrs);
 // The hot path: a load and a store on this thread's own cell.
 requests.add(1);
 bytes_in.add(512);
+```
+
+Histograms take bucket bounds, or a preset. A latency histogram has its buckets
+built in, 1-2-5 from 10 µs to 10 s, exports in seconds, and comes with a timer:
+
+```rust
+use nanometer::HistogramDef;
+
+const BATCH: HistogramDef = HistogramDef::counts("batch_size").unit("{message}");
+
+let payload = meter.histogram(HistogramDef::bytes("payload_size"), &attrs);
+let batch = meter.histogram(BATCH, &attrs);
+let latency = meter.latency("put_latency", &attrs);
+
+let timer = latency.start(); // records when dropped
+payload.record(4_096);
+batch.record(12);
+drop(timer);
+
+// Or record a Duration, or keep the timer's result:
+let elapsed = latency.start().stop();
+latency.record(elapsed);
 ```
 
 Handles are `!Send`, so each thread or core creates its own. They all feed one series,
@@ -97,32 +125,73 @@ let provider = SdkMeterProvider::builder()
 
 To use the global provider instead, pass `&*opentelemetry::global::meter_provider()`.
 
+### Exporting histograms
+
+Counters export through observable instruments, with any provider. Histograms
+export through `nanometer::Producer`, an OTel `MetricProducer` that the app registers
+with its reader, once. That takes the `sdk` feature, in the app only; libraries keep
+the default features:
+
+```toml
+[dependencies]
+nanometer = { version = "0.0.0", features = ["sdk"] }
+
+# OTel 0.33.1 with MetricProducer re-added, until it is upstream. Patch both crates:
+# patching only the SDK pulls in a second copy of the API crate.
+[patch.crates-io]
+opentelemetry = { git = "https://github.com/merlimat/opentelemetry-rust", branch = "metric-producer-0.33.1" }
+opentelemetry_sdk = { git = "https://github.com/merlimat/opentelemetry-rust", branch = "metric-producer-0.33.1" }
+```
+
+```rust
+use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
+
+let reader = PeriodicReader::builder(exporter) // e.g. OTLP to a Collector
+    .with_producer(nanometer::Producer::new())
+    .build();
+let provider = SdkMeterProvider::builder().with_reader(reader).build();
+```
+
+The producer exports every histogram in the process as a cumulative OTLP histogram.
+With a pull exporter that has no producer hook, such as Prometheus's, push OTLP to a
+Collector or to Prometheus's OTLP receiver instead.
+
 ## Performance
 
 Measured with `cargo bench` ([benches/record.rs](nanometer/benches/record.rs)) on an
 Apple M5 Pro (18 cores of two kinds, 6 + 12) under macOS, with Rust 1.99, fat LTO and
 one codegen unit. Every thread records into the same series, with three attributes,
 through its own handle. Each figure is the mean time per call over the threads, as a
-range over four runs. No case allocates.
+range over three runs. No case allocates.
 
 | ns per call | 1 thread | 2 threads | 18 threads |
 |---|---:|---:|---:|
-| nanometer `LocalCounter::add` | 1.1–1.3 | 1.1–1.3 | 1.1–1.2 |
-| `AtomicU64::fetch_add` on one shared counter | 1.6 | 11–12 | 122–123 |
-| OTel SDK bound counter `add` | 1.8–1.9 | 18–19 | 150–155 |
-| OTel SDK `Counter::add` | 44–46 | 158–161 | 2,370–2,450 |
-| Empty loop, not subtracted | 0.2–0.4 | 0.2–0.3 | 0.2–0.3 |
+| nanometer `LocalCounter::add` | 1.2–1.3 | 1.2–1.3 | 1.1–1.2 |
+| `AtomicU64::fetch_add` on one shared counter | 1.6 | 11–12 | 95–98 |
+| OTel SDK bound counter `add` | 1.8 | 18–63 | 150–410 |
+| OTel SDK `Counter::add` | 45–46 | 160 | 2,370–2,510 |
+| nanometer `LocalHistogram::record` | 2.5–2.6 | 2.5 | 3.4–3.6 |
+| OTel SDK bound histogram `record` | 10.9–11.1 | 49–51 | 657–674 |
+| nanometer latency timer, start and stop | 35–37 | 37–40 | 41–42 |
+| OTel SDK bound histogram in seconds, timed with `Instant::now()` | 49–52 | 194–210 | 2,090–2,240 |
+| Empty loop, not subtracted | 0.2 | 0.2 | 0.2 |
+
+The histograms have the latency preset's 19 bounds, with values spread over the
+first 12 buckets.
 
 On one thread the SDK's bound counter comes close, since its `add` is a single
 uncontended atomic add. As threads are added, their atomic adds all hit the same
-cache line, while each nanometer handle writes a cell of its own. The 18-thread runs
-mix both kinds of core.
+cache line, while each nanometer handle writes cells of its own. The SDK's bound
+histogram also takes a lock per series. Contended runs vary the most from run to run,
+and the 18-thread runs mix both kinds of core. A timer's cost is mostly its two
+`Instant::now()` calls: nanometer's record adds the 2.5 ns above, while the SDK's adds
+its locked `f64` record, which is what grows with threads.
 
 ## Building
 
 ```sh
-cargo test
-cargo clippy --all-targets
+cargo test --all-features
+cargo clippy --all-targets --all-features
 cargo fmt --check
 cargo bench
 ```
@@ -130,7 +199,7 @@ cargo bench
 Under Miri, the integration tests need clock access, because the SDK reads the time:
 
 ```sh
-MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri test
+MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri test --all-features
 ```
 
 [docs/design-notes.md](docs/design-notes.md) has the measurements and reasoning behind

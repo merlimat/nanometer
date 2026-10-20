@@ -3,6 +3,13 @@ members = ["nanometer"]
 exclude = ["reference"]
 resolver = "3"
 
+# OTel SDK 0.33.1 with `MetricProducer` re-added, until it is upstream
+# (https://github.com/open-telemetry/opentelemetry-rust/issues/2505). Patching only
+# the SDK would pull in a second copy of the API crate from the same repository.
+[patch.crates-io]
+opentelemetry = { git = "https://github.com/merlimat/opentelemetry-rust", branch = "metric-producer-0.33.1" }
+opentelemetry_sdk = { git = "https://github.com/merlimat/opentelemetry-rust", branch = "metric-producer-0.33.1" }
+
 # Benchmarks, per the conventions in CLAUDE.md.
 [profile.bench]
 lto = "fat"

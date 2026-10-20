@@ -26,9 +26,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
-      # internal-logs changes what otel_warn! expands to.
+      # internal-logs changes what otel_warn! expands to; sdk adds the producer.
       - run: cargo clippy --all-targets --no-default-features -- -D warnings
-      - run: cargo doc --no-deps
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -44,7 +45,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test
+      # The histogram tests export through the producer, which needs sdk.
+      - run: cargo test --all-features
 
   miri:
     name: Miri
@@ -57,7 +59,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # The arena's unsafe cell pointers, and cells read by the exporter while their
       # threads write them.
-      - run: cargo miri test
+      - run: cargo miri test --all-features
         env:
           # The SDK reads the clock during collection.
           MIRIFLAGS: -Zmiri-disable-isolation
