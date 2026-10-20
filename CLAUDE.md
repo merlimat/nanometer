@@ -26,6 +26,9 @@ let reqs = meter.counter("requests", &attrs);              // LocalCounter: !Sen
 reqs.add(1);
 let conns = meter.up_down_counter("connections", &attrs);  // LocalUpDownCounter: i64
 conns.add(-1);
+let backlog = meter.gauge("backlog", &attrs);              // Gauge: Send + Sync, i64
+backlog.set(42);
+let depth = meter.observable_gauge("depth", &attrs, || 7); // ObservableGauge: callback
 
 const DEPTH: HistogramDef = HistogramDef::new("queue_depth")
     .unit("{item}").buckets(&[1, 10, 100, 1_000]);
@@ -68,8 +71,13 @@ let shared = meter.shared_counter("requests", &attrs);     // Send + Sync, strip
   thread; only arenas are cache-line separated). Padding every cell to 128 B costs 16×.
 - **Drop:** fold an instance's final value into a per-series base so cumulative values
   never go backwards when a core or handle goes away.
-- **Gauge:** one atomic per series, last write wins. **UpDownCounter:** per-instance `i64`,
-  summed like counters.
+- **Gauge** (`i64`; user, Oct 20): `Gauge` is one atomic per series, last write wins,
+  from any thread; a series exports nothing until its first set and leaves the export
+  when its last handle drops. `ObservableGauge` is a callback per series, run at export
+  outside nanometer's locks, unregistered when its handle drops. A second gauge for a
+  series is ignored with a warning: each gauge should have its own attributes. Both
+  export through one OTel observable gauge per metric.
+- **UpDownCounter:** per-instance `i64`, summed like counters.
 - **Histogram:** per-instance bucket counts plus an integer sum (e.g. µs, not f64).
   Bucket = first bound >= value (`partition_point(|b| b < v)`, same rule as OTel).
   At export, count = sum of buckets, so a snapshot taken during in-flight records stays

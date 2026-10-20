@@ -62,7 +62,7 @@ impl MetricProducer for Producer {
             .values()
             .filter_map(|entry| match entry {
                 Entry::Histogram(metric) => Some(Arc::clone(metric)),
-                Entry::Counter(_) => None,
+                Entry::Counter(_) | Entry::Gauge(_) => None,
             })
             .collect();
         let now = SystemTime::now();
