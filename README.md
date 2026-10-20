@@ -45,7 +45,9 @@ Early: the API is a draft and will change.
   see [Exporting histograms](#exporting-histograms).
 - [ ] Delta temporality for histograms: they export as cumulative.
 - [x] `LocalUpDownCounter`, exported through observable up-down counters.
-- [ ] Gauges, `Send + Sync` shared handles and a cardinality cap.
+- [x] Gauges: `Gauge`, set from any thread, and `ObservableGauge`, read from a callback
+  at each export.
+- [ ] `Send + Sync` shared counter handles and a cardinality cap.
 
 ## Example
 
@@ -79,6 +81,24 @@ the increment:
 let connections = meter.up_down_counter("connections", &attrs);
 connections.add(1);
 connections.add(-1);
+```
+
+Gauges report a current value: set it, from any thread, or have nanometer read it
+from a callback at each export. A series leaves the export when its last handle is
+dropped, and each series takes one gauge, so give each gauge its own attributes:
+
+```rust
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
+
+let backlog = meter.gauge("backlog_bytes", &attrs);
+backlog.set(4_096);
+
+let queued = Arc::new(AtomicI64::new(0));
+let depth = {
+    let queued = Arc::clone(&queued);
+    meter.observable_gauge("queue_depth", &attrs, move || queued.load(Ordering::Relaxed))
+};
 ```
 
 Histograms take bucket bounds, or a preset. A latency histogram has its buckets
@@ -140,8 +160,8 @@ To use the global provider instead, pass `&*opentelemetry::global::meter_provide
 
 ### Exporting histograms
 
-Counters and up-down counters export through observable instruments, with any
-provider. Histograms
+Counters, up-down counters and gauges export through observable instruments, with
+any provider. Histograms
 export through `nanometer::Producer`, an OTel `MetricProducer` that the app registers
 with its reader, once. That takes the `sdk` feature, in the app only; libraries keep
 the default features:

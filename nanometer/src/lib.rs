@@ -29,13 +29,14 @@
 //! requests.add(1);
 //! ```
 //!
-//! Counters and up-down counters export through OTel observable instruments, with any
-//! provider. Histograms
+//! Counters, up-down counters and gauges export through OTel observable instruments,
+//! with any provider. Histograms
 //! export through [`Producer`], registered with the app's reader, which needs the
 //! `sdk` feature and an OTel SDK with `MetricProducer` support.
 
 mod arena;
 mod counter;
+mod gauge;
 mod histogram;
 mod latency;
 #[cfg(feature = "sdk")]
@@ -44,6 +45,7 @@ mod registry;
 mod series;
 
 pub use counter::{CounterDef, LocalCounter, LocalUpDownCounter, UpDownCounterDef};
+pub use gauge::{Gauge, GaugeDef, ObservableGauge};
 pub use histogram::{HistogramDef, LocalHistogram};
 pub use latency::{LatencyDef, LocalLatency, Timer};
 #[cfg(feature = "sdk")]
@@ -90,6 +92,24 @@ impl Meter {
         attributes: &[KeyValue],
     ) -> LocalUpDownCounter {
         LocalUpDownCounter::new(self, def.into(), attributes)
+    }
+
+    /// A gauge handle, set from any thread; handles for the same series share its value.
+    /// Attributes are resolved as for [`counter`](Meter::counter).
+    pub fn gauge(&self, def: impl Into<GaugeDef>, attributes: &[KeyValue]) -> Gauge {
+        Gauge::new(self, def.into(), attributes)
+    }
+
+    /// A gauge that exports what `callback` returns, at each collection, until the
+    /// returned handle is dropped. Attributes are resolved as for
+    /// [`counter`](Meter::counter).
+    pub fn observable_gauge(
+        &self,
+        def: impl Into<GaugeDef>,
+        attributes: &[KeyValue],
+        callback: impl Fn() -> i64 + Send + Sync + 'static,
+    ) -> ObservableGauge {
+        ObservableGauge::new(self, def.into(), attributes, callback)
     }
 
     /// A histogram instance for the calling thread. Attributes are resolved as for

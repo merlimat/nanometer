@@ -66,7 +66,7 @@ impl SeriesSet {
 
 /// Sorts by key and drops repeated keys, keeping the last value, so that attribute
 /// lists naming the same set map to the same series.
-fn normalize(attributes: &[KeyValue]) -> Vec<KeyValue> {
+pub(crate) fn normalize(attributes: &[KeyValue]) -> Vec<KeyValue> {
     let mut attributes: Vec<KeyValue> = attributes.iter().rev().cloned().collect();
     // Stable sort: among equal keys the originally last one comes first and survives.
     attributes.sort_by(|a, b| a.key.cmp(&b.key));

@@ -179,13 +179,8 @@ impl HistogramMetric {
                 }
                 Arc::clone(metric)
             }
-            Some(Entry::Histogram(metric)) => {
-                registry::warn_conflict(meter.scope, def.name, &metric.def, &def);
-                // Not registered, so never exported.
-                HistogramMetric::new(meter.scope, def)
-            }
-            Some(Entry::Counter(metric)) => {
-                registry::warn_conflict(meter.scope, def.name, &metric.kind(), &def);
+            Some(other) => {
+                registry::warn_conflict(meter.scope, def.name, &other.kind(), &def);
                 // Not registered, so never exported.
                 HistogramMetric::new(meter.scope, def)
             }

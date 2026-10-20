@@ -34,9 +34,9 @@ use crate::series::{Instance, SeriesSet, bump};
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CounterDef {
-    name: &'static str,
-    unit: Option<&'static str>,
-    description: Option<&'static str>,
+    pub(crate) name: &'static str,
+    pub(crate) unit: Option<&'static str>,
+    pub(crate) description: Option<&'static str>,
 }
 
 impl CounterDef {
@@ -130,13 +130,9 @@ impl CounterMetric {
                 }
                 Arc::clone(metric)
             }
-            Some(Entry::Counter(metric)) => {
-                registry::warn_conflict(meter.scope, def.name, &metric.kind(), &kind(up_down));
+            Some(other) => {
+                registry::warn_conflict(meter.scope, def.name, &other.kind(), &kind(up_down));
                 // Not registered, so never exported.
-                CounterMetric::new(def, up_down)
-            }
-            Some(Entry::Histogram(metric)) => {
-                registry::warn_conflict(meter.scope, def.name, &metric.def, &def);
                 CounterMetric::new(def, up_down)
             }
             None => {

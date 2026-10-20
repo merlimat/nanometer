@@ -18,12 +18,28 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
+use opentelemetry::KeyValue;
+
 use crate::counter::CounterMetric;
+use crate::gauge::GaugeMetric;
 use crate::histogram::HistogramMetric;
 
 pub(crate) enum Entry {
     Counter(Arc<CounterMetric>),
     Histogram(Arc<HistogramMetric>),
+    Gauge(Arc<GaugeMetric>),
+}
+
+impl Entry {
+    /// For conflict warnings.
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Entry::Counter(metric) => metric.kind(),
+            Entry::Histogram(metric) if metric.def.latency => "a latency histogram",
+            Entry::Histogram(_) => "a histogram",
+            Entry::Gauge(_) => "a gauge",
+        }
+    }
 }
 
 pub(crate) type Registry = HashMap<(&'static str, &'static str), Entry>;
@@ -34,6 +50,16 @@ static REGISTRY: LazyLock<Mutex<Registry>> = LazyLock::new(Default::default);
 
 pub(crate) fn lock() -> MutexGuard<'static, Registry> {
     REGISTRY.lock().unwrap()
+}
+
+/// A second gauge for a series that has one: the first wins.
+pub(crate) fn warn_duplicate_series(scope: &str, name: &str, attributes: &[KeyValue]) {
+    opentelemetry::otel_warn!(
+        name: "DuplicateGaugeSeries",
+        scope = scope,
+        metric = name,
+        attributes = format!("{attributes:?}"),
+    );
 }
 
 /// Same name, different definition: the first definition wins.
