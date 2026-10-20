@@ -6,6 +6,9 @@ license = "Apache-2.0"
 
 [dependencies]
 opentelemetry = { version = "=0.33.1", default-features = false, features = ["metrics"] }
+# The latency timer's clock. The default `mock` feature adds a thread-local check to
+# every `quanta::Instant::now`; the timer uses `Clock::raw`, but keep it off anyway.
+quanta = { version = "0.13", default-features = false }
 opentelemetry_sdk = { version = "=0.33.1", optional = true, default-features = false, features = [
     "metrics",
     "experimental_metrics_producer",

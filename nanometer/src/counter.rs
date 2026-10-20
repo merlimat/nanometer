@@ -134,6 +134,8 @@ pub struct LocalCounter {
 }
 
 impl LocalCounter {
+    // Cold: keeps setup out of the code around the record path.
+    #[inline(never)]
     pub(crate) fn new(meter: &Meter, def: CounterDef, attributes: &[KeyValue]) -> Self {
         let metric = CounterMetric::get_or_register(meter, def);
         LocalCounter {

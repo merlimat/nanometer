@@ -32,9 +32,9 @@ depth.record(v);
 let size = meter.histogram(HistogramDef::bytes("payload"), &attrs); // presets: bytes, counts
 
 let lat = meter.latency("put_latency", &attrs);            // LocalLatency: fixed 1-2-5
-let _t = lat.start();                                      // buckets 10 µs–10 s, µs in,
-                                                           // seconds out; Timer records
-                                                           // on drop (.stop/.discard)
+let _t = lat.start();                                      // buckets 10 µs–10 s, quanta
+                                                           // ticks in, seconds out; Timer
+                                                           // records on drop (.stop/.discard)
 
 let shared = meter.shared_counter("requests", &attrs);     // Send + Sync, striped fetch_add
 ```

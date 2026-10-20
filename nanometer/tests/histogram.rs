@@ -152,9 +152,9 @@ fn instances_on_other_threads_are_summed_and_kept_after_exit() {
 }
 
 #[test]
-fn latency_records_microseconds_and_exports_seconds() {
+fn latency_exports_seconds() {
     let (provider, reader) = setup();
-    let scope = "latency_records_microseconds_and_exports_seconds";
+    let scope = "latency_exports_seconds";
     let latency = Meter::new(&provider, scope).latency("put_latency", &[]);
     latency.record(Duration::from_micros(15));
     latency.record(Duration::from_millis(3));
@@ -171,7 +171,9 @@ fn latency_records_microseconds_and_exports_seconds() {
     counts[8] = 1;
     counts[19] = 1;
     assert_eq!(point.counts, counts);
-    assert!((point.sum - 60.003_015).abs() < 1e-9, "{}", point.sum);
+    // Each record rounds down to the sum's unit, at most a microsecond.
+    let error = 60.003_015 - point.sum;
+    assert!((0.0..3e-6).contains(&error), "{}", point.sum);
 }
 
 #[test]
@@ -187,7 +189,12 @@ fn timer_records_on_drop_and_stop_but_not_discard() {
 
     let point = &collect(&reader, scope, "op_latency").unwrap().points[0];
     assert_eq!(point.count, 2);
-    assert!(point.sum >= elapsed.as_micros() as f64 / 1e6);
+    // Records round down to the sum's unit, at most a microsecond.
+    assert!(
+        point.sum > elapsed.as_secs_f64() - 1e-6,
+        "{} {elapsed:?}",
+        point.sum
+    );
 }
 
 #[test]
@@ -248,6 +255,12 @@ fn conflicting_definitions_keep_the_first() {
         (point.bounds.as_slice(), point.counts.as_slice()),
         (&[10.0][..], &[2, 0][..])
     );
+
+    // Latencies count clock ticks: a latency handle named like a plain histogram is
+    // not exported, and leaves the histogram alone.
+    meter.latency("size", &[]).record(Duration::from_secs(1));
+    let point = &collect(&reader, scope, "size").unwrap().points[0];
+    assert_eq!(point.counts, [2, 0]);
 
     // A histogram named like an existing counter is not exported.
     meter.counter("requests", &[]).add(1);
