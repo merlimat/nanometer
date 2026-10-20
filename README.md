@@ -161,17 +161,21 @@ To use the global provider instead, pass `&*opentelemetry::global::meter_provide
 ### Exporting histograms
 
 Counters, up-down counters and gauges export through observable instruments, with
-any provider. Histograms
-export through `nanometer::Producer`, an OTel `MetricProducer` that the app registers
-with its reader, once. That takes the `sdk` feature, in the app only; libraries keep
-the default features:
+any provider. Histograms export through `nanometer::Producer`, an OTel
+`MetricProducer` that the app registers with its reader, once. That takes the `sdk`
+feature, in the app only; libraries keep the default features.
+
+Until an OTel SDK release has `MetricProducer`
+([open-telemetry/opentelemetry-rust#3802](https://github.com/open-telemetry/opentelemetry-rust/pull/3802)),
+the app also patches OTel to 0.33.1 with it re-added, and turns it on in its own SDK
+dependency:
 
 ```toml
 [dependencies]
-nanometer = { version = "0.0.0", features = ["sdk"] }
+nanometer = { version = "0.1", features = ["sdk"] }
+opentelemetry_sdk = { version = "=0.33.1", features = ["experimental_metrics_producer"] }
 
-# OTel 0.33.1 with MetricProducer re-added, until it is upstream. Patch both crates:
-# patching only the SDK pulls in a second copy of the API crate.
+# Patch both crates: patching only the SDK pulls in a second copy of the API crate.
 [patch.crates-io]
 opentelemetry = { git = "https://github.com/merlimat/opentelemetry-rust", branch = "metric-producer-0.33.1" }
 opentelemetry_sdk = { git = "https://github.com/merlimat/opentelemetry-rust", branch = "metric-producer-0.33.1" }
@@ -188,7 +192,8 @@ let provider = SdkMeterProvider::builder().with_reader(reader).build();
 
 The producer exports every histogram in the process as a cumulative OTLP histogram.
 With a pull exporter that has no producer hook, such as Prometheus's, push OTLP to a
-Collector or to Prometheus's OTLP receiver instead.
+Collector or to Prometheus's OTLP receiver instead. docs.rs builds nanometer without
+the `sdk` feature, so `Producer` is documented here and in its source.
 
 ## Performance
 

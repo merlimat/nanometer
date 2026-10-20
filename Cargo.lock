@@ -114,7 +114,7 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "nanometer"
-version = "0.0.0"
+version = "0.0.0-dev"
 dependencies = [
  "opentelemetry",
  "opentelemetry_sdk",
@@ -264,6 +264,13 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
+name = "sdk-patch"
+version = "0.0.0"
+dependencies = [
+ "opentelemetry_sdk",
+]
 
 [[package]]
 name = "slab"

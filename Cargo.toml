@@ -1,5 +1,5 @@
 [workspace]
-members = ["nanometer"]
+members = ["nanometer", "sdk-patch"]
 exclude = ["reference"]
 resolver = "3"
 

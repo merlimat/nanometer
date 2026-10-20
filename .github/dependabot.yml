@@ -1,0 +1,27 @@
+# Weekly version updates. In each entry, minor and patch bumps share one pull
+# request and major bumps get one each. For a crate below 1.0, Dependabot
+# follows Cargo and counts 0.33 -> 0.34 as a major bump.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # The OTel crates are pinned exactly, and the SDK is patched to a fork of
+      # 0.33.1 (see the root Cargo.toml), so their updates get a pull request of
+      # their own.
+      opentelemetry:
+        patterns: [opentelemetry, opentelemetry_sdk, opentelemetry-*]
+      crates:
+        update-types: [minor, patch]
+        exclude-patterns: [opentelemetry, opentelemetry_sdk, opentelemetry-*]
+
+  # Covers every workflow in .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        update-types: [minor, patch]

@@ -18,10 +18,13 @@ use std::time::SystemTime;
 
 use opentelemetry::InstrumentationScope;
 use opentelemetry_sdk::error::OTelSdkError;
+use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::data::{
     AggregatedMetrics, Histogram, HistogramDataPoint, Metric, ScopeMetrics,
 };
-use opentelemetry_sdk::metrics::{MetricProducer, Temporality};
+// Only in an SDK with `experimental_metrics_producer`, which the app turns on (README,
+// "Exporting histograms"). The compile error shows this line, hence its comment.
+use opentelemetry_sdk::metrics::MetricProducer; // needs experimental_metrics_producer
 
 use crate::histogram::HistogramMetric;
 use crate::latency;
