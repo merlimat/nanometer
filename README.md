@@ -16,7 +16,9 @@ on io_uring, and it also works from ordinary multi-threaded code.
   and a store on a cell only its thread writes: 1.1–1.2 ns on 1 to 18 threads,
   where the OTel SDK's `Counter::add` takes 46 ns on one thread and 2.5–2.6 µs on 18.
   A histogram `record` takes 2.4–3.4 ns, against 11 ns and 590–670 ns for the SDK's
-  bound histogram, and timing a latency 2.7–3.4 ns ([Performance](#performance)).
+  bound histogram, and timing a latency 2.7–3.4 ns. Those are on an Apple M5 Pro; on
+  server CPUs the timer takes 27–50 ns, as their counter is slower to read
+  ([Performance](#performance)).
 - **Your OTel setup, unchanged.** A library takes an OTel `MeterProvider` and a scope
   name; the app keeps its exporter. Libraries depend only on the `opentelemetry` API
   crate.
@@ -211,6 +213,8 @@ range over three runs. No case allocates.
 | OTel SDK `Counter::add` | 46 | 157–159 | 2,500–2,640 |
 | nanometer `LocalHistogram::record` | 2.4–2.5 | 2.5 | 3.4 |
 | OTel SDK bound histogram `record` | 10.8–10.9 | 48–50 | 589–668 |
+| quanta `Clock::raw`, one counter read | 0.3–0.5 | 0.3–0.5 | 0.4 |
+| `Instant::now()`, one read | 13 | 13–14 | 14–16 |
 | nanometer latency timer, start and stop | 2.7–2.9 | 2.7–2.9 | 3.3–3.4 |
 | OTel SDK bound histogram in seconds, timed with `Instant::now()` | 47–49 | 188–204 | 2,030–2,210 |
 | Empty loop, not subtracted | 0.2 | 0.2 | 0.2 |
@@ -223,9 +227,46 @@ uncontended atomic add. As threads are added, their atomic adds all hit the same
 cache line, while each nanometer handle writes cells of its own. The SDK's bound
 histogram also takes a lock per series. Contended runs vary the most from run to run,
 and the 18-thread runs mix both kinds of core. nanometer's timer reads the CPU's
-counter twice, for well under a nanosecond, and records the ticks against bounds
-converted to ticks once; the SDK way pays two `Instant::now()` calls, about 25 ns
-here, plus its locked `f64` record, which is what grows with threads.
+counter twice, for well under a nanosecond on this CPU, and records the ticks against
+bounds converted to ticks once; the SDK way pays two `Instant::now()` calls, about
+25 ns here, plus its locked `f64` record, which is what grows with threads.
+
+### Other platforms
+
+[.github/workflows/bench.yml](.github/workflows/bench.yml) runs the same bench on
+GitHub's hosted runners, in a `rust:1` container on Linux and natively on Windows and
+macOS; start it from the Actions tab, or push a `bench/**` branch. The runners are
+shared virtual machines with 4 vCPUs (3 on macOS), so these figures
+come from one run each, in October 2026, and the contended ones are rough.
+`ubuntu-latest` lands on different CPUs from run to run; two of them are shown. Each
+cell is 1 thread / all threads.
+
+| ns per call | Linux x86-64, AMD EPYC 7763 | Linux x86-64, Intel Xeon Platinum 8573C | Windows x64, AMD EPYC 7763 | Linux arm64, Neoverse-N2 | macOS arm64, Apple M1 (virtual) |
+|---|---:|---:|---:|---:|---:|
+| nanometer `LocalCounter::add` | 0.6 / 1.3 | 0.6 / 1.1 | 0.6 / 1.4 | 1.8 / 1.8 | 1.5 / 1.7 |
+| `AtomicU64::fetch_add` on one shared counter | 2.3 / 77 | 8.5 / 67 | 2.3 / 72 | 4.2 / 24 | 2.9 / 17 |
+| OTel SDK bound counter `add` | 4.4 / 90 | 7.6 / 84 | 5.0 / 83 | 7.6 / 44 | 5.8 / 29 |
+| OTel SDK `Counter::add` | 100 / 392 | 84 / 401 | 116 / 274 | 96 / 408 | 119 / 365 |
+| nanometer `LocalHistogram::record` | 5.4 / 9.6 | 4.4 / 8.9 | 5.6 / 9.9 | 5.6 / 5.6 | 4.5 / 5.4 |
+| OTel SDK bound histogram `record` | 26 / 348 | 19 / 459 | 26 / 587 | 24 / 455 | 21 / 178 |
+| quanta `Clock::raw`, one counter read | 11 / 12 | 8.4 / 12 | 11 / 12 | 13 / 13 | 1.0 / 1.2 |
+| `Instant::now()`, one read | 28 / 31 | 19 / 25 | 38 / 43 | 31 / 31 | 33 / 31 |
+| nanometer latency timer, start and stop | 50 / 51 | 31 / 37 | 50 / 54 | 27 / 27 | 6.9 / 7.4 |
+| OTel SDK bound histogram in seconds, timed with `Instant::now()` | 99 / 472 | 79 / 665 | 117 / 568 | 104 / 806 | 113 / 905 |
+| Empty loop, not subtracted | 0.3 / 0.7 | 0.3 / 0.6 | 0.3 / 0.7 | 0.3 / 0.3 | 0.4 / 0.4 |
+
+As on the M5, nanometer's handles cost a few nanoseconds and stay flat as threads
+are added, while the shared atomic and the SDK's instruments grow by tens to hundreds
+of nanoseconds. On the x86 runners even the empty loop doubles at 4 threads: their 4
+vCPUs are 2 cores with two hyperthreads each (Windows reports 2 cores, 4 logical
+processors).
+
+What changes is the cost of reading the CPU's counter. It is about a nanosecond on
+Apple silicon, even virtualized, and 8–13 ns on the server CPUs, whatever the OS, so
+the latency timer takes 27–50 ns there instead of 3. That is still 2–4 times less
+than the SDK's way on one thread, and `Clock::raw` beats `Instant::now()` on every
+platform. On x86 the timer also costs 10–21 ns more than its two reads and a record
+add up to; on arm64 it costs about that sum or less.
 
 ## Building
 
