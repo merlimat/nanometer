@@ -1,7 +1,7 @@
 name: Bench
 
-# benches/record.rs in a Linux container on an x86-64 runner: on a push to a bench/**
-# branch, or by hand once this workflow is on main.
+# benches/record.rs in a Linux container on x86-64 and arm64 runners: on a push to a
+# bench/** branch, or by hand once this workflow is on main.
 on:
   push:
     branches: ["bench/**"]
@@ -15,16 +15,21 @@ env:
 
 jobs:
   bench:
-    name: Bench (linux/x86-64 container)
-    runs-on: ubuntu-latest
+    name: Bench (${{ matrix.runner }}, rust:1 container)
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     container: rust:1
     steps:
       - uses: actions/checkout@v7
-      # quanta reads the TSC only when the CPU reports both an invariant (nonstop) TSC
-      # and rdtscp; otherwise the latency timer falls back to the OS clock.
+      # On x86-64, quanta reads the TSC only when the CPU reports both an invariant
+      # (nonstop) TSC and rdtscp; otherwise the latency timer falls back to the OS
+      # clock. On arm64 it always reads the system counter.
       - name: CPU and clock source
         run: |
-          grep -m1 'model name' /proc/cpuinfo
+          lscpu | grep -E '^(Architecture|Vendor ID|Model name)'
           grep -o -w -E 'constant_tsc|nonstop_tsc|rdtscp' /proc/cpuinfo | sort -u
           cat /sys/devices/system/clocksource/clocksource0/current_clocksource
       - run: cargo bench -p nanometer --bench record
