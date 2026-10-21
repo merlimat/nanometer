@@ -1,7 +1,8 @@
 name: Bench
 
-# benches/record.rs in a Linux container on x86-64 and arm64 runners: on a push to a
-# bench/** branch, or by hand once this workflow is on main.
+# benches/record.rs in a Linux container on x86-64 and arm64 runners, and natively on
+# Windows x64 and macOS arm64: on a push to a bench/** branch, or by hand once this
+# workflow is on main.
 on:
   push:
     branches: ["bench/**"]
@@ -32,4 +33,20 @@ jobs:
           lscpu | grep -E '^(Architecture|Vendor ID|Model name)'
           grep -o -w -E 'constant_tsc|nonstop_tsc|rdtscp' /proc/cpuinfo | sort -u
           cat /sys/devices/system/clocksource/clocksource0/current_clocksource
+      - run: cargo bench -p nanometer --bench record
+
+  native:
+    name: Bench (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      # The bench prints the CPU model on macOS and Linux only.
+      - name: CPU
+        if: runner.os == 'Windows'
+        run: Get-CimInstance Win32_Processor | Format-List Name, NumberOfCores, NumberOfLogicalProcessors
       - run: cargo bench -p nanometer --bench record
