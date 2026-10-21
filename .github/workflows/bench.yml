@@ -1,8 +1,7 @@
 name: Bench
 
 # benches/record.rs in a Linux container on x86-64 and arm64 runners, and natively on
-# Windows x64 and macOS arm64: on a push to a bench/** branch, or by hand once this
-# workflow is on main.
+# Windows x64 and macOS arm64: by hand, or on a push to a bench/** branch.
 on:
   push:
     branches: ["bench/**"]
