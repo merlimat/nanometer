@@ -33,6 +33,7 @@ use nanometer::{HistogramDef, Meter};
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::MeterProvider as _;
 use opentelemetry_sdk::metrics::{ManualReader, SdkMeterProvider};
+use quanta::Clock;
 
 /// Counts heap allocations per thread, so each thread sees only its own.
 struct CountingAlloc;
@@ -196,6 +197,20 @@ fn main() {
         let histogram = meter.histogram(HistogramDef::new("latency").buckets(BOUNDS), &attrs);
         let mut value = spread();
         move || histogram.record(value())
+    });
+    // One clock read each: the latency timer reads quanta's clock twice, the SDK
+    // timer below reads `Instant` twice.
+    let clock = Clock::new();
+    case("quanta Clock::raw", &threads, MEDIUM, || {
+        let clock = clock.clone();
+        move || {
+            black_box(clock.raw());
+        }
+    });
+    case("std Instant::now", &threads, MEDIUM, || {
+        || {
+            black_box(Instant::now());
+        }
     });
     case("nanometer LocalLatency timer", &threads, MEDIUM, || {
         let latency = meter.latency("timed", &attrs);
