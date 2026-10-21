@@ -13,10 +13,10 @@ on io_uring, and it also works from ordinary multi-threaded code.
 
 - **A few nanoseconds per record.** No locks, no read-modify-write atomics, no
   allocation and no attribute handling on the record path. A counter `add` is a load
-  and a store on a cell only its thread writes: 1.1–1.2 ns on 1 to 18 threads,
-  where the OTel SDK's `Counter::add` takes 46 ns on one thread and 2.5–2.6 µs on 18.
-  A histogram `record` takes 2.4–3.4 ns, against 11 ns and 590–670 ns for the SDK's
-  bound histogram, and timing a latency 2.7–3.4 ns. Those are on an Apple M5 Pro; on
+  and a store on a cell only its thread writes: 0.9–1.2 ns on 1 to 18 threads,
+  where the OTel SDK's `Counter::add` takes 45 ns on one thread and 2.4 µs on 18.
+  A histogram `record` takes 2.4–3.5 ns, against 11 ns and 630 ns for the SDK's
+  bound histogram, and timing a latency 2.8–3.7 ns. Those are on an Apple M5 Pro; on
   server CPUs the timer takes 27–50 ns, as their counter is slower to read
   ([Performance](#performance)).
 - **Your OTel setup, unchanged.** A library takes an OTel `MeterProvider` and a scope
@@ -202,47 +202,45 @@ the `sdk` feature, so `Producer` is documented here and in its source.
 Measured with `cargo bench` ([benches/record.rs](nanometer/benches/record.rs)), with
 Rust 1.99, fat LTO and one codegen unit. Every thread records into the same series,
 with three attributes, through its own handle. Each figure is the mean time per call
-over the threads. No case allocates, and the empty loop, 0.2–0.4 ns on one thread, is
+over the threads. No case allocates, and the empty loop, 0.2–0.3 ns on one thread, is
 not subtracted.
 
-- **Apple M5 Pro**, 18 cores of two kinds (6 + 12), under macOS: a range over three
+- **Apple M5 Pro**, 18 cores of two kinds (6 + 12), under macOS: the median of three
   runs.
 - **GitHub's hosted runners**, through
   [.github/workflows/bench.yml](.github/workflows/bench.yml): in a `rust:1` container
   on Linux and natively on Windows and macOS; start it from the Actions tab, or push a
-  `bench/**` branch. They are shared virtual machines with 4 vCPUs (3 on macOS), so
-  their figures come from one run each, in October 2026, and the contended ones are
-  rough. `ubuntu-latest` lands on different CPUs from run to run; two of them are
-  shown.
+  `bench/**` branch. They are shared virtual machines with 4 vCPUs, so their figures
+  come from one run each, in October 2026, and the contended ones are rough.
+  `ubuntu-latest` lands on different CPUs from run to run; two of them are shown.
 
-All threads means one per CPU: 18 on the M5 Pro, 4 on the runners, 3 on the macOS
-runner. The OTel rows use the SDK's bound instruments, its fastest path, and for
+All threads means one per CPU: 18 on the M5 Pro, 4 on the runners. The OTel rows use the SDK's bound instruments, its fastest path, and for
 counters also the plain `Counter::add`, which takes the attributes on every call; for
 latencies, a bound histogram in seconds timed with `Instant::now()`. The histograms
 have the latency preset's 19 bounds, with values spread over the first 12 buckets.
 
-| Counters, ns per `add` | macOS arm64, Apple M5 Pro | Linux x86-64, AMD EPYC 7763 | Linux x86-64, Intel Xeon Platinum 8573C | Windows x64, AMD EPYC 7763 | Linux arm64, Neoverse-N2 | macOS arm64, Apple M1 (virtual) |
-|---|---:|---:|---:|---:|---:|---:|
-| nanometer, 1 thread | 1.1–1.2 | 0.6 | 0.6 | 0.6 | 1.8 | 1.5 |
-| OTel bound, 1 thread | 1.8 | 4.4 | 7.6 | 5.0 | 7.6 | 5.8 |
-| OTel `Counter::add`, 1 thread | 46 | 100 | 84 | 116 | 96 | 119 |
-| nanometer, all threads | 1.1 | 1.3 | 1.1 | 1.4 | 1.8 | 1.7 |
-| OTel bound, all threads | 156–159 | 90 | 84 | 83 | 44 | 29 |
-| OTel `Counter::add`, all threads | 2,500–2,640 | 392 | 401 | 274 | 408 | 365 |
+| Counters, ns per `add` | macOS arm64, Apple M5 Pro | Linux x86-64, AMD EPYC 7763 | Linux x86-64, Intel Xeon Platinum 8573C | Windows x64, AMD EPYC 7763 | Linux arm64, Neoverse-N2 |
+|---|---:|---:|---:|---:|---:|
+| nanometer, 1 thread | 0.9 | 0.6 | 0.6 | 0.6 | 1.8 |
+| OTel bound, 1 thread | 1.8 | 4.4 | 7.6 | 5.0 | 7.6 |
+| OTel `Counter::add`, 1 thread | 45 | 100 | 84 | 116 | 96 |
+| nanometer, all threads | 1.2 | 1.3 | 1.1 | 1.4 | 1.8 |
+| OTel bound, all threads | 158 | 90 | 84 | 83 | 44 |
+| OTel `Counter::add`, all threads | 2,435 | 392 | 401 | 274 | 408 |
 
-| Histograms, ns per `record` | macOS arm64, Apple M5 Pro | Linux x86-64, AMD EPYC 7763 | Linux x86-64, Intel Xeon Platinum 8573C | Windows x64, AMD EPYC 7763 | Linux arm64, Neoverse-N2 | macOS arm64, Apple M1 (virtual) |
-|---|---:|---:|---:|---:|---:|---:|
-| nanometer, 1 thread | 2.4–2.5 | 5.4 | 4.4 | 5.6 | 5.6 | 4.5 |
-| OTel, 1 thread | 10.8–10.9 | 26 | 19 | 26 | 24 | 21 |
-| nanometer, all threads | 3.4 | 9.6 | 8.9 | 9.9 | 5.6 | 5.4 |
-| OTel, all threads | 589–668 | 348 | 459 | 587 | 455 | 178 |
+| Histograms, ns per `record` | macOS arm64, Apple M5 Pro | Linux x86-64, AMD EPYC 7763 | Linux x86-64, Intel Xeon Platinum 8573C | Windows x64, AMD EPYC 7763 | Linux arm64, Neoverse-N2 |
+|---|---:|---:|---:|---:|---:|
+| nanometer, 1 thread | 2.4 | 5.4 | 4.4 | 5.6 | 5.6 |
+| OTel, 1 thread | 11 | 26 | 19 | 26 | 24 |
+| nanometer, all threads | 3.5 | 9.6 | 8.9 | 9.9 | 5.6 |
+| OTel, all threads | 632 | 348 | 459 | 587 | 455 |
 
-| Latency histograms, ns per timed call | macOS arm64, Apple M5 Pro | Linux x86-64, AMD EPYC 7763 | Linux x86-64, Intel Xeon Platinum 8573C | Windows x64, AMD EPYC 7763 | Linux arm64, Neoverse-N2 | macOS arm64, Apple M1 (virtual) |
-|---|---:|---:|---:|---:|---:|---:|
-| nanometer, 1 thread | 2.7–2.9 | 50 | 31 | 50 | 27 | 6.9 |
-| OTel, 1 thread | 47–49 | 99 | 79 | 117 | 104 | 113 |
-| nanometer, all threads | 3.3–3.4 | 51 | 37 | 54 | 27 | 7.4 |
-| OTel, all threads | 2,030–2,210 | 472 | 665 | 568 | 806 | 905 |
+| Latency histograms, ns per timed call | macOS arm64, Apple M5 Pro | Linux x86-64, AMD EPYC 7763 | Linux x86-64, Intel Xeon Platinum 8573C | Windows x64, AMD EPYC 7763 | Linux arm64, Neoverse-N2 |
+|---|---:|---:|---:|---:|---:|
+| nanometer, 1 thread | 2.8 | 50 | 31 | 50 | 27 |
+| OTel, 1 thread | 48 | 99 | 79 | 117 | 104 |
+| nanometer, all threads | 3.7 | 51 | 37 | 54 | 27 |
+| OTel, all threads | 2,103 | 472 | 665 | 568 | 806 |
 
 nanometer's handles cost a few nanoseconds everywhere and stay flat as threads are
 added. On one thread the SDK's bound counter comes closest, since its `add` is a
@@ -256,8 +254,8 @@ cores with two hyperthreads each (Windows reports 2 cores, 4 logical processors)
 nanometer's timer reads the CPU's counter twice and records the ticks against bounds
 converted to ticks once; the SDK way pays two `Instant::now()` calls plus its locked
 `f64` record, which is what grows with threads. The bench also times single clock
-reads. Reading the counter takes 0.3–0.5 ns on the M5 and about 1 ns on the virtual
-M1, but 8–13 ns on the server CPUs, whatever the OS; `Instant::now()` takes 13 ns on
+reads. Reading the counter takes under half a nanosecond on the M5 but 8–13 ns on
+the server CPUs, whatever the OS; `Instant::now()` takes 13 ns on
 the M5 and 19–38 ns on the runners. So the latency timer takes 27–50 ns on the server
 CPUs instead of 3, still 2–4 times less than the SDK's way on one thread. On x86 the
 timer also costs 10–21 ns more than its two reads and a record add up to; on arm64 it
