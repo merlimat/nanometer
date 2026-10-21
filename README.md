@@ -203,21 +203,17 @@ Measured with `cargo bench` ([benches/record.rs](nanometer/benches/record.rs)) o
 Apple M5 Pro (18 cores of two kinds, 6 + 12) under macOS, with Rust 1.99, fat LTO and
 one codegen unit. Every thread records into the same series, with three attributes,
 through its own handle. Each figure is the mean time per call over the threads, as a
-range over three runs. No case allocates.
+range over three runs. No case allocates. The empty loop, 0.2 ns, is not subtracted.
 
 | ns per call | 1 thread | 2 threads | 18 threads |
 |---|---:|---:|---:|
 | nanometer `LocalCounter::add` | 1.1–1.2 | 1.1–1.2 | 1.1 |
-| `AtomicU64::fetch_add` on one shared counter | 1.5 | 11 | 131–134 |
 | OTel SDK bound counter `add` | 1.8 | 17 | 156–159 |
 | OTel SDK `Counter::add` | 46 | 157–159 | 2,500–2,640 |
 | nanometer `LocalHistogram::record` | 2.4–2.5 | 2.5 | 3.4 |
 | OTel SDK bound histogram `record` | 10.8–10.9 | 48–50 | 589–668 |
-| quanta `Clock::raw`, one counter read | 0.3–0.5 | 0.3–0.5 | 0.4 |
-| `Instant::now()`, one read | 13 | 13–14 | 14–16 |
 | nanometer latency timer, start and stop | 2.7–2.9 | 2.7–2.9 | 3.3–3.4 |
 | OTel SDK bound histogram in seconds, timed with `Instant::now()` | 47–49 | 188–204 | 2,030–2,210 |
-| Empty loop, not subtracted | 0.2 | 0.2 | 0.2 |
 
 The histograms have the latency preset's 19 bounds, with values spread over the
 first 12 buckets.
@@ -238,34 +234,40 @@ GitHub's hosted runners, in a `rust:1` container on Linux and natively on Window
 macOS; start it from the Actions tab, or push a `bench/**` branch. The runners are
 shared virtual machines with 4 vCPUs (3 on macOS), so these figures
 come from one run each, in October 2026, and the contended ones are rough.
-`ubuntu-latest` lands on different CPUs from run to run; two of them are shown. Each
-cell is 1 thread / all threads.
+`ubuntu-latest` lands on different CPUs from run to run; two of them are shown. The
+empty loop, 0.3–0.4 ns on one thread, is not subtracted.
 
-| ns per call | Linux x86-64, AMD EPYC 7763 | Linux x86-64, Intel Xeon Platinum 8573C | Windows x64, AMD EPYC 7763 | Linux arm64, Neoverse-N2 | macOS arm64, Apple M1 (virtual) |
+| ns per call, 1 thread | Linux x86-64, AMD EPYC 7763 | Linux x86-64, Intel Xeon Platinum 8573C | Windows x64, AMD EPYC 7763 | Linux arm64, Neoverse-N2 | macOS arm64, Apple M1 (virtual) |
 |---|---:|---:|---:|---:|---:|
-| nanometer `LocalCounter::add` | 0.6 / 1.3 | 0.6 / 1.1 | 0.6 / 1.4 | 1.8 / 1.8 | 1.5 / 1.7 |
-| `AtomicU64::fetch_add` on one shared counter | 2.3 / 77 | 8.5 / 67 | 2.3 / 72 | 4.2 / 24 | 2.9 / 17 |
-| OTel SDK bound counter `add` | 4.4 / 90 | 7.6 / 84 | 5.0 / 83 | 7.6 / 44 | 5.8 / 29 |
-| OTel SDK `Counter::add` | 100 / 392 | 84 / 401 | 116 / 274 | 96 / 408 | 119 / 365 |
-| nanometer `LocalHistogram::record` | 5.4 / 9.6 | 4.4 / 8.9 | 5.6 / 9.9 | 5.6 / 5.6 | 4.5 / 5.4 |
-| OTel SDK bound histogram `record` | 26 / 348 | 19 / 459 | 26 / 587 | 24 / 455 | 21 / 178 |
-| quanta `Clock::raw`, one counter read | 11 / 12 | 8.4 / 12 | 11 / 12 | 13 / 13 | 1.0 / 1.2 |
-| `Instant::now()`, one read | 28 / 31 | 19 / 25 | 38 / 43 | 31 / 31 | 33 / 31 |
-| nanometer latency timer, start and stop | 50 / 51 | 31 / 37 | 50 / 54 | 27 / 27 | 6.9 / 7.4 |
-| OTel SDK bound histogram in seconds, timed with `Instant::now()` | 99 / 472 | 79 / 665 | 117 / 568 | 104 / 806 | 113 / 905 |
-| Empty loop, not subtracted | 0.3 / 0.7 | 0.3 / 0.6 | 0.3 / 0.7 | 0.3 / 0.3 | 0.4 / 0.4 |
+| nanometer `LocalCounter::add` | 0.6 | 0.6 | 0.6 | 1.8 | 1.5 |
+| OTel SDK bound counter `add` | 4.4 | 7.6 | 5.0 | 7.6 | 5.8 |
+| OTel SDK `Counter::add` | 100 | 84 | 116 | 96 | 119 |
+| nanometer `LocalHistogram::record` | 5.4 | 4.4 | 5.6 | 5.6 | 4.5 |
+| OTel SDK bound histogram `record` | 26 | 19 | 26 | 24 | 21 |
+| nanometer latency timer, start and stop | 50 | 31 | 50 | 27 | 6.9 |
+| OTel SDK bound histogram in seconds, timed with `Instant::now()` | 99 | 79 | 117 | 104 | 113 |
+
+| ns per call, all threads (4; 3 on macOS) | Linux x86-64, AMD EPYC 7763 | Linux x86-64, Intel Xeon Platinum 8573C | Windows x64, AMD EPYC 7763 | Linux arm64, Neoverse-N2 | macOS arm64, Apple M1 (virtual) |
+|---|---:|---:|---:|---:|---:|
+| nanometer `LocalCounter::add` | 1.3 | 1.1 | 1.4 | 1.8 | 1.7 |
+| OTel SDK bound counter `add` | 90 | 84 | 83 | 44 | 29 |
+| OTel SDK `Counter::add` | 392 | 401 | 274 | 408 | 365 |
+| nanometer `LocalHistogram::record` | 9.6 | 8.9 | 9.9 | 5.6 | 5.4 |
+| OTel SDK bound histogram `record` | 348 | 459 | 587 | 455 | 178 |
+| nanometer latency timer, start and stop | 51 | 37 | 54 | 27 | 7.4 |
+| OTel SDK bound histogram in seconds, timed with `Instant::now()` | 472 | 665 | 568 | 806 | 905 |
 
 As on the M5, nanometer's handles cost a few nanoseconds and stay flat as threads
-are added, while the shared atomic and the SDK's instruments grow by tens to hundreds
-of nanoseconds. On the x86 runners even the empty loop doubles at 4 threads: their 4
-vCPUs are 2 cores with two hyperthreads each (Windows reports 2 cores, 4 logical
-processors).
+are added, while the SDK's instruments grow by tens to hundreds of nanoseconds. On
+the x86 runners nanometer's counter and histogram double at 4 threads, as an empty
+loop does: their 4 vCPUs are 2 cores with two hyperthreads each (Windows reports 2
+cores, 4 logical processors).
 
-What changes is the cost of reading the CPU's counter. It is about a nanosecond on
-Apple silicon, even virtualized, and 8–13 ns on the server CPUs, whatever the OS, so
-the latency timer takes 27–50 ns there instead of 3. That is still 2–4 times less
-than the SDK's way on one thread, and `Clock::raw` beats `Instant::now()` on every
-platform. On x86 the timer also costs 10–21 ns more than its two reads and a record
+What changes is the cost of reading the CPU's counter, which the bench also times on
+its own: about a nanosecond on Apple silicon, even virtualized, and 8–13 ns on the
+server CPUs, whatever the OS, against 19–38 ns for `Instant::now()`. So the latency
+timer takes 27–50 ns there instead of 3, still 2–4 times less than the SDK's way on
+one thread. On x86 the timer also costs 10–21 ns more than its two reads and a record
 add up to; on arm64 it costs about that sum or less.
 
 ## Building
