@@ -237,30 +237,33 @@ come from one run each, in October 2026, and the contended ones are rough.
 `ubuntu-latest` lands on different CPUs from run to run; two of them are shown. The
 empty loop, 0.3–0.4 ns on one thread, is not subtracted.
 
-N threads means one per vCPU: 4, or 3 on macOS. The OTel rows use the SDK's bound
-instruments, its fastest path; for latencies, a bound histogram in seconds timed with
-`Instant::now()`.
+All threads means one per vCPU: 4, or 3 on macOS. The OTel rows use the SDK's bound
+instruments, its fastest path, and for counters also the plain `Counter::add`, which
+takes the attributes on every call; for latencies, a bound histogram in seconds timed
+with `Instant::now()`.
 
 | Counters, ns per `add` | Linux x86-64, AMD EPYC 7763 | Linux x86-64, Intel Xeon Platinum 8573C | Windows x64, AMD EPYC 7763 | Linux arm64, Neoverse-N2 | macOS arm64, Apple M1 (virtual) |
 |---|---:|---:|---:|---:|---:|
 | nanometer, 1 thread | 0.6 | 0.6 | 0.6 | 1.8 | 1.5 |
-| OTel, 1 thread | 4.4 | 7.6 | 5.0 | 7.6 | 5.8 |
-| nanometer, N threads | 1.3 | 1.1 | 1.4 | 1.8 | 1.7 |
-| OTel, N threads | 90 | 84 | 83 | 44 | 29 |
+| OTel bound, 1 thread | 4.4 | 7.6 | 5.0 | 7.6 | 5.8 |
+| OTel `Counter::add`, 1 thread | 100 | 84 | 116 | 96 | 119 |
+| nanometer, all threads | 1.3 | 1.1 | 1.4 | 1.8 | 1.7 |
+| OTel bound, all threads | 90 | 84 | 83 | 44 | 29 |
+| OTel `Counter::add`, all threads | 392 | 401 | 274 | 408 | 365 |
 
 | Histograms, ns per `record` | Linux x86-64, AMD EPYC 7763 | Linux x86-64, Intel Xeon Platinum 8573C | Windows x64, AMD EPYC 7763 | Linux arm64, Neoverse-N2 | macOS arm64, Apple M1 (virtual) |
 |---|---:|---:|---:|---:|---:|
 | nanometer, 1 thread | 5.4 | 4.4 | 5.6 | 5.6 | 4.5 |
 | OTel, 1 thread | 26 | 19 | 26 | 24 | 21 |
-| nanometer, N threads | 9.6 | 8.9 | 9.9 | 5.6 | 5.4 |
-| OTel, N threads | 348 | 459 | 587 | 455 | 178 |
+| nanometer, all threads | 9.6 | 8.9 | 9.9 | 5.6 | 5.4 |
+| OTel, all threads | 348 | 459 | 587 | 455 | 178 |
 
 | Latency histograms, ns per timed call | Linux x86-64, AMD EPYC 7763 | Linux x86-64, Intel Xeon Platinum 8573C | Windows x64, AMD EPYC 7763 | Linux arm64, Neoverse-N2 | macOS arm64, Apple M1 (virtual) |
 |---|---:|---:|---:|---:|---:|
 | nanometer, 1 thread | 50 | 31 | 50 | 27 | 6.9 |
 | OTel, 1 thread | 99 | 79 | 117 | 104 | 113 |
-| nanometer, N threads | 51 | 37 | 54 | 27 | 7.4 |
-| OTel, N threads | 472 | 665 | 568 | 806 | 905 |
+| nanometer, all threads | 51 | 37 | 54 | 27 | 7.4 |
+| OTel, all threads | 472 | 665 | 568 | 806 | 905 |
 
 As on the M5, nanometer's handles cost a few nanoseconds and stay flat as threads
 are added, while the SDK's instruments grow by tens to hundreds of nanoseconds. On
