@@ -88,8 +88,8 @@ impl MetricProducer for Producer {
 fn export(histogram: &HistogramMetric, now: SystemTime) -> Option<Metric> {
     let def = &histogram.def;
     let data = if def.latency {
-        // Bounds in µs, sums in units of the clock's ticks: both to seconds.
-        let bounds: Vec<f64> = def.buckets.iter().map(|&us| us as f64 / 1e6).collect();
+        // Bounds in ns, sums in units of the clock's ticks: both to seconds.
+        let bounds: Vec<f64> = def.buckets.iter().map(|&ns| ns as f64 / 1e9).collect();
         let seconds = latency::seconds_per_sum_unit();
         AggregatedMetrics::F64(points(histogram, &bounds, now, |sum| sum as f64 * seconds)?.into())
     } else {

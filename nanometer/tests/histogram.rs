@@ -159,24 +159,45 @@ fn latency_exports_seconds() {
     let (provider, reader) = setup();
     let scope = "latency_exports_seconds";
     let latency = Meter::new(&provider, scope).latency("put_latency", &[]);
+    latency.record(Duration::from_nanos(300));
     latency.record(Duration::from_micros(15));
     latency.record(Duration::from_millis(3));
-    latency.record(Duration::from_secs(60));
+    latency.record(Duration::from_secs(50));
+    latency.record(Duration::from_secs(1_000));
 
     let exported = collect(&reader, scope, "put_latency").unwrap();
     assert_eq!((exported.unit.as_str(), exported.float), ("s", true));
     let point = &exported.points[0];
-    assert_eq!(point.bounds.len(), 19);
-    assert_eq!((point.bounds[0], point.bounds[18]), (0.000_01, 10.0));
-    // 15 µs is at most 20 µs, 3 ms at most 5 ms, and 60 s above the last bound.
-    let mut counts = vec![0; 20];
-    counts[1] = 1;
-    counts[8] = 1;
-    counts[19] = 1;
+    assert_eq!(point.bounds.len(), 45);
+    assert_eq!((point.bounds[0], point.bounds[44]), (0.000_000_1, 63.0));
+    assert_eq!(point.bounds[23], 0.004);
+    // 300 ns is at most 400 ns, 15 µs at most 16 µs, 3 ms at most 4 ms, 50 s at most
+    // 63 s, and 1,000 s above the last bound.
+    let mut counts = vec![0; 46];
+    counts[3] = 1;
+    counts[11] = 1;
+    counts[23] = 1;
+    counts[44] = 1;
+    counts[45] = 1;
     assert_eq!(point.counts, counts);
-    // Each record rounds down to the sum's unit, at most a microsecond.
-    let error = 60.003_015 - point.sum;
-    assert!((0.0..3e-6).contains(&error), "{}", point.sum);
+    // Each record rounds down to the sum's unit, at most 100 ns.
+    let error = 1_050.003_015_3 - point.sum;
+    assert!((0.0..5e-7).contains(&error), "{}", point.sum);
+}
+
+#[test]
+fn latencies_under_a_microsecond_add_to_the_sum() {
+    let (provider, reader) = setup();
+    let scope = "latencies_under_a_microsecond_add_to_the_sum";
+    let latency = Meter::new(&provider, scope).latency("get_latency", &[]);
+    for _ in 0..1_000 {
+        latency.record(Duration::from_nanos(300));
+    }
+
+    let point = &collect(&reader, scope, "get_latency").unwrap().points[0];
+    // Each record rounds down to the sum's unit, at most 100 ns.
+    let error = 300e-9 - point.sum / point.count as f64;
+    assert!((0.0..100e-9).contains(&error), "{}", point.sum);
 }
 
 #[test]
@@ -192,9 +213,9 @@ fn timer_records_on_drop_and_stop_but_not_discard() {
 
     let point = &collect(&reader, scope, "op_latency").unwrap().points[0];
     assert_eq!(point.count, 2);
-    // Records round down to the sum's unit, at most a microsecond.
+    // Records round down to the sum's unit, at most 100 ns.
     assert!(
-        point.sum > elapsed.as_secs_f64() - 1e-6,
+        point.sum > elapsed.as_secs_f64() - 1e-7,
         "{} {elapsed:?}",
         point.sum
     );

@@ -15,8 +15,9 @@ on io_uring, and it also works from ordinary multi-threaded code.
   allocation and no attribute handling on the record path. A counter `add` is a load
   and a store on a cell only its thread writes: 0.9–1.2 ns on 1 to 18 threads,
   where the OTel SDK's `Counter::add` takes 45 ns on one thread and 2.4 µs on 18.
-  A histogram `record` takes 2.4–3.5 ns, against 11 ns and 630 ns for the SDK's
-  bound histogram, and timing a latency 2.8–3.7 ns. Those are on an Apple M5 Pro; on
+  A histogram `record` over 19 bounds takes 2.4–3.5 ns, against 11 ns and 630 ns for
+  the SDK's bound histogram, and timing a latency 2.8–3.7 ns; the latency preset's 45
+  bounds add about 0.2 ns. Those are on an Apple M5 Pro; on
   server CPUs the timer takes 27–50 ns, as their counter is slower to read
   ([Performance](#performance)).
 - **Your OTel setup, unchanged.** A library takes an OTel `MeterProvider` and a scope
@@ -104,9 +105,12 @@ let depth = {
 ```
 
 Histograms take bucket bounds, or a preset. A latency histogram has its buckets
-built in, 1-2-5 from 10 µs to 10 s, exports in seconds, and comes with a timer that
-reads the CPU's counter through [quanta](https://docs.rs/quanta). The first latency
-handle in a process calibrates that clock, which blocks for 10 to 200 ms, once:
+built in: five per decade from 100 ns to 63 s, on Renard's R5 numbers (1, 1.6, 2.5,
+4, 6.3), so a quantile that a backend estimates from them, the max included, is
+within 1.6 times the true value in that range. It exports in
+seconds and comes with a timer that reads the CPU's counter through
+[quanta](https://docs.rs/quanta). The first latency handle in a process calibrates
+that clock, which blocks for 10 to 200 ms, once:
 
 ```rust
 use nanometer::HistogramDef;
@@ -217,7 +221,11 @@ not subtracted.
 All threads means one per CPU: 18 on the M5 Pro, 4 on the runners. The OTel rows use the SDK's bound instruments, its fastest path, and for
 counters also the plain `Counter::add`, which takes the attributes on every call; for
 latencies, a bound histogram in seconds timed with `Instant::now()`. The histograms
-have the latency preset's 19 bounds, with values spread over the first 12 buckets.
+have the latency preset's bounds. The figures in the two histogram tables are from
+October, when the preset had 19 bounds and the values spread over the first 12
+buckets. The bench now uses the preset's 45 bounds, with values over the first 29,
+which on the M5 add about 0.2 ns to nanometer's `record` and timer, and 3 ns to the
+SDK's `record` ([details](docs/design-notes.md#7-latency-bucket-bounds)).
 
 | Counters, ns per `add` | macOS arm64, Apple M5 Pro | Linux x86-64, AMD EPYC 7763 | Linux x86-64, Intel Xeon Platinum 8573C | Windows x64, AMD EPYC 7763 | Linux arm64, Neoverse-N2 |
 |---|---:|---:|---:|---:|---:|

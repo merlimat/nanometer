@@ -113,6 +113,70 @@ could be cheaper still, but adds staleness and a flush hook; not worth it at ~1 
 `nanometer`: an OTel Meter whose records cost nanoseconds. Free on crates.io as of
 2026-10-16 (also free then: tinos, corecount, zerocount, bucketeer, tallyho, picometer).
 
+## 7. Latency bucket bounds
+
+Chosen Nov 5, 2026. Backends estimate quantiles from bucket counts:
+`histogram_quantile` finds the bucket that holds the quantile and interpolates
+linearly inside it, so the estimate can be anywhere in that bucket. A max is only
+available as `histogram_quantile(1, …)`, the upper bound of the slowest value's
+bucket. A value above the last bound reads as that bound, and one in the first bucket
+as anything from 0 to its bound.
+
+nanometer 0.1's latency preset was 1-2-5 from 10 µs to 10 s, 19 bounds 2 to 2.5 times
+apart: a 3 ms max read as 5 ms, and an operation of a few µs as anything up to 10 µs.
+It is now Renard's R5 from 100 ns to 63 s, 45 bounds each 1.56 to 1.6 times the last,
+so an estimate is within 1.6 times the true value: a 3 ms max reads as 4 ms. Of 0.1's
+bounds, the powers of ten are still bounds, so a query that names one of those `le`
+values still finds it; one that names a 2 or a 5, an SLO at 50 ms say, doesn't.
+
+- **Not R10.** Ten per decade (1, 1.25, 1.6, 2, 2.5, 3.15, 4, 5, 6.3, 8) from 1 µs to
+  100 s reads within 1.28 times and keeps all of 0.1's bounds, but takes 81 bounds. A
+  backend that stores Prometheus-style buckets keeps a series per bucket, plus `_sum`
+  and `_count`: 84 per histogram series, against 48 for R5 and 22 for 0.1.
+- **Floor, 100 ns.** An operation served from memory, such as a cached get, can take a
+  few hundred ns. A measurement includes about one counter read: under a nanosecond on
+  Apple silicon, 8–13 ns on the server CPUs measured. Apple's counter moves every
+  42 ns (its timebase is 24 MHz; the M5's counter reads in ns, in steps of about 42),
+  and each bucket from 100 ns up spans at least one step.
+- **Ceiling, 63 s.** The first R5 bound past 50 s. A client that gives a server 10 s to
+  answer takes a little more for an operation that runs into that timeout, past 0.1's
+  last bound. Ending at 40 s would save a series, at 100 s cost one.
+- **Sum.** It counts in units of the largest power of two of ticks within 100 ns, 50 to
+  100 ns (64 ns on the M5), and each record rounds down to the unit, so a mean reads
+  at most one unit low: on the M5, 1,000 records of 300 ns export a mean of 256 ns,
+  and of 2 µs a mean of 1.98 µs. 0.1's unit was the largest within a µs, under which
+  those read 0 and 1.54 µs. A `u64` sum lasts 8 to 16 times less than one of 0.1's
+  units: about three years at an average of 10,000 operations in flight on one series.
+- **Cost.** The bucket lookup is `partition_point`, a branchless binary search: 6 steps
+  instead of 5, about 0.2 ns more per record on the M5 Pro (below). Each handle holds
+  47 cells instead of 21: 376 B, within a regular arena chunk (512 B), instead of
+  168 B. Each exported point carries 46 buckets instead of 20.
+- **A slower or busier core hides less of the search.** Each step waits for the
+  previous step's load. With R10's 81 bounds, on the M5's 12 Performance cores, the
+  slower of its two kinds (forced with background QoS), a record took about 17 ns
+  instead of 13 with 19 bounds, against 3.0 and 2.5 ns on its 6 Super cores; and
+  while other builds loaded the machine (load average 5 to 15), the histogram row of
+  `benches/record.rs` varied from 3.1 to 7.1 ns per record from one run to the next,
+  where 19 bounds held at 2.5 ns and the timer, which always records into the first
+  bucket, at 3.3 ns. With R5's 45 bounds, under a load average of 7 to 28, that row
+  stayed 0.12 to 0.23 ns above 19 bounds in 6 of 7 alternating runs. It records back
+  to back, the worst case for a long chain; one record per request overlaps it with
+  other work.
+
+`LocalHistogram::record` on one thread of the M5 Pro, ns per record, the same compiled
+loop over each table (median of nine runs in three batches, while other work kept the
+load average between 7 and 28, so compare rows rather than figures; the generator
+alone costs 2.39 ns, the array read 0.25 ns):
+
+| Bounds | Search steps | Values from the bench's generator, 0–30 ms | Values from an array, 0.5 µs–200 s log-uniform |
+|---|---:|---:|---:|
+| 1-2-5, 10 µs–10 s (19) | 5 | 2.61 | 2.03 |
+| R5, 100 ns–63 s (45) | 6 | 2.84 | 2.26 |
+| R10, 1 µs–100 s (81) | 7 | 3.22 | 2.69 |
+
+On an idle machine the same loop took 2.40 and 1.82 ns with 19 bounds, 2.59 and
+2.05 ns with R10 from 10 µs to 10 s (61 bounds, 6 steps), and 2.86 and 2.47 ns with 81.
+
 ## Sources
 
 - opentelemetry-rust tags `opentelemetry_sdk-0.33.1`, `-0.30.0`, `-0.29.0`: SDK

@@ -69,7 +69,7 @@ pub struct HistogramDef {
     pub(crate) unit: Option<&'static str>,
     pub(crate) description: Option<&'static str>,
     pub(crate) buckets: &'static [u64],
-    /// A latency histogram: `buckets` are in µs, handles record clock ticks against
+    /// A latency histogram: `buckets` are in ns, handles record clock ticks against
     /// them converted to ticks, and the export is in seconds.
     pub(crate) latency: bool,
 }
@@ -97,7 +97,7 @@ impl HistogramDef {
         HistogramDef::new(name).buckets(COUNTS_BUCKETS)
     }
 
-    /// A latency histogram with `buckets` in µs, exported in seconds.
+    /// A latency histogram with `buckets` in ns, exported in seconds.
     pub(crate) const fn latency(
         name: &'static str,
         description: Option<&'static str>,
