@@ -25,18 +25,30 @@ use crate::histogram::{HistogramDef, LocalHistogram};
 #[cfg(not(miri))]
 use quanta::Clock;
 
-/// 1-2-5 from 10 µs to 10 s, in µs.
-const LATENCY_BUCKETS_US: &[u64] = &[
-    10, 20, 50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000, 200_000,
-    500_000, 1_000_000, 2_000_000, 5_000_000, 10_000_000,
-];
+/// Renard's R10 numbers, times 100: ten per decade, each 1.25 to 1.28 times the last.
+const R10: [u64; 10] = [100, 125, 160, 200, 250, 315, 400, 500, 630, 800];
+
+/// R10 from 1 µs to 100 s, in ns: 1, 1.25, 1.6, 2, 2.5, 3.15, 4, 5, 6.3, 8, 10 µs …
+/// 80, 100 s. They include the 1-2-5 bounds of nanometer 0.1, 10 µs to 10 s.
+const LATENCY_BUCKETS_NS: &[u64] = &{
+    let mut bounds = [0; 81];
+    let mut i = 0;
+    while i < bounds.len() {
+        // 1 µs is 100 × 10 ns.
+        bounds[i] = R10[i % 10] * 10u64.pow((i / 10) as u32 + 1);
+        i += 1;
+    }
+    bounds
+};
 
 /// Name and description of a latency histogram.
 ///
-/// The buckets are fixed, 1-2-5 from 10 µs to 10 s (10, 20, 50 µs … 5, 10 s).
-/// Latencies are timed with the CPU's counter, through [quanta], and exported in
-/// seconds, unit `s`, as the OpenTelemetry semantic conventions do for durations.
-/// `&str` converts into a definition without a description.
+/// The buckets are fixed: ten per decade from 1 µs to 100 s, Renard's R10 numbers
+/// (1, 1.25, 1.6, 2, 2.5, 3.15, 4, 5, 6.3, 8, 10 µs … 80, 100 s), so each bound is
+/// at most 1.28 times the one before. Latencies are timed with the CPU's counter,
+/// through [quanta], and exported in seconds, unit `s`, as the OpenTelemetry semantic
+/// conventions do for durations. `&str` converts into a definition without a
+/// description.
 ///
 /// [quanta]: https://docs.rs/quanta
 ///
@@ -66,7 +78,7 @@ impl LatencyDef {
     }
 
     const fn histogram(self) -> HistogramDef {
-        HistogramDef::latency(self.name, self.description, LATENCY_BUCKETS_US)
+        HistogramDef::latency(self.name, self.description, LATENCY_BUCKETS_NS)
     }
 }
 
@@ -79,7 +91,7 @@ impl From<&'static str> for LatencyDef {
 /// The clock latency handles read, and the bounds they compare ticks against.
 struct Ticks {
     clock: Clock,
-    /// `LATENCY_BUCKETS_US` in ticks.
+    /// `LATENCY_BUCKETS_NS` in ticks.
     buckets: Box<[u64]>,
     /// Sums are kept in units of `1 << sum_shift` ticks, the largest power of two
     /// within a microsecond, so that a `u64` sum lasts as long as one in µs would. At
@@ -98,13 +110,13 @@ fn ticks() -> &'static Ticks {
         // quanta converts ticks to ns; invert it over a long span to go the other way.
         const SPAN: u64 = 1 << 40;
         let ticks_per_ns = SPAN as f64 / clock.delta_as_nanos(0, SPAN) as f64;
-        let to_ticks = |us: u64| (us as f64 * 1_000.0 * ticks_per_ns) as u64;
-        let buckets: Box<[u64]> = LATENCY_BUCKETS_US.iter().map(|&us| to_ticks(us)).collect();
+        let to_ticks = |ns: u64| (ns as f64 * ticks_per_ns) as u64;
+        let buckets: Box<[u64]> = LATENCY_BUCKETS_NS.iter().map(|&ns| to_ticks(ns)).collect();
         debug_assert!(buckets.windows(2).all(|w| w[0] < w[1]));
         Ticks {
             clock,
             buckets,
-            sum_shift: to_ticks(1).checked_ilog2().unwrap_or(0),
+            sum_shift: to_ticks(1_000).checked_ilog2().unwrap_or(0),
             ticks_per_ns,
         }
     })
@@ -246,5 +258,29 @@ impl Clock {
 
     fn delta(&self, start: u64, end: u64) -> Duration {
         Duration::from_nanos(self.delta_as_nanos(start, end))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn latency_buckets_are_r10_from_1_us_to_100_s() {
+        let bounds = LATENCY_BUCKETS_NS;
+        assert_eq!(bounds.len(), 81);
+        assert_eq!((bounds[0], bounds[80]), (1_000, 100_000_000_000));
+        assert_eq!(
+            bounds[10..20],
+            [
+                10_000, 12_500, 16_000, 20_000, 25_000, 31_500, 40_000, 50_000, 63_000, 80_000
+            ]
+        );
+        // Each bound at most 1.28 times the one before.
+        assert!(bounds.windows(2).all(|w| w[1] * 100 <= w[0] * 128));
+        // nanometer 0.1's bounds, 1-2-5 from 10 µs to 10 s, are all still bounds, so
+        // queries that name their `le` keep working.
+        let old = (4..10).flat_map(|e| [1, 2, 5].map(|m| m * 10u64.pow(e)));
+        assert!(old.chain([10_000_000_000]).all(|b| bounds.contains(&b)));
     }
 }

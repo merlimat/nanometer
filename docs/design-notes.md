@@ -113,6 +113,53 @@ could be cheaper still, but adds staleness and a flush hook; not worth it at ~1 
 `nanometer`: an OTel Meter whose records cost nanoseconds. Free on crates.io as of
 2026-10-16 (also free then: tinos, corecount, zerocount, bucketeer, tallyho, picometer).
 
+## 7. Latency bucket bounds
+
+Chosen Nov 5, 2026. Backends estimate quantiles from bucket counts:
+`histogram_quantile` finds the bucket that holds the quantile and interpolates
+linearly inside it, so the estimate can be anywhere in that bucket. A max is only
+available as `histogram_quantile(1, …)`, the upper bound of the slowest value's
+bucket. A value above the last bound reads as that bound, and one in the first bucket
+as anything from 0 to its bound.
+
+nanometer 0.1's latency preset was 1-2-5 from 10 µs to 10 s, 19 bounds 2 to 2.5 times
+apart: a 3 ms max read as 5 ms, and an operation of a few µs as anything up to 10 µs.
+It is now Renard's R10 from 1 µs to 100 s, 81 bounds each 1.25 to 1.28 times the last,
+so an estimate is within 1.28 times the true value. They include all of 0.1's bounds,
+so a query that names one of its `le` values, an SLO threshold say, still finds it.
+
+- **Floor, 1 µs.** An operation served from memory, such as a cached lookup, can take
+  a few µs. Below 1 µs the timer itself costs 27–50 ns on server CPUs, and Apple's
+  24 MHz counter ticks every 42 ns: bounds of 125 and 160 ns would be the same tick.
+- **Ceiling, 100 s.** A client that gives a server 10 s to answer takes more than 10 s
+  for an operation that runs into that timeout, past 0.1's last bound. 81 bounds take
+  as many search steps as 71, so the extra decade costs no time.
+- **Cost.** The bucket lookup is `partition_point`, a branchless binary search: 7 steps
+  instead of 5, about 0.5 ns more per record on an idle M5 Pro (below). Each handle
+  holds 83 cells instead of 21: 664 B, in an arena chunk of its own (768 B), instead
+  of 168 B. Each exported point carries 82 buckets instead of 20, so a backend that
+  stores Prometheus-style buckets keeps 84 series per histogram series instead of 22.
+- **A slower or busier core hides less of the search.** Each step waits for the
+  previous step's load. On the M5's 12 Performance cores, the slower of its two kinds
+  (forced with background QoS), a record took about 17 ns instead of 13 with 19
+  bounds, against 3.0 and 2.5 ns on its 6 Super cores. While other builds loaded the
+  machine (load average 5 to 15), the histogram row of `benches/record.rs` varied
+  from 3.1 to 7.1 ns per record from one run to the next, where 19 bounds held at
+  2.5 ns; the timer, which always records into the first bucket, held at 3.3 ns. That
+  row records back to back, the worst case for a long chain; one record per request
+  overlaps it with other work.
+
+`LocalHistogram::record` on one thread of the M5 Pro, ns per record, the same compiled
+loop over each table (median of three runs; the generator alone costs 2.24 ns, the
+array read 0.22 ns):
+
+| Bounds | Search steps | Values from the bench's generator, 0–30 ms | Values from an array, 0.5 µs–200 s log-uniform |
+|---|---:|---:|---:|
+| 1-2-5, 10 µs–10 s (19) | 5 | 2.40 | 1.82 |
+| R10, 10 µs–10 s (61) | 6 | 2.59 | 2.05 |
+| R10, 1 µs–10 s (71) | 7 | 2.87 | 2.49 |
+| R10, 1 µs–100 s (81) | 7 | 2.86 | 2.47 |
+
 ## Sources
 
 - opentelemetry-rust tags `opentelemetry_sdk-0.33.1`, `-0.30.0`, `-0.29.0`: SDK

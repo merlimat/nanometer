@@ -180,16 +180,22 @@ fn main() {
         move || sdk.add(1, black_box(attrs))
     });
 
-    // Histograms: the latency preset's 19 bounds (10 µs to 10 s, in µs), with values
-    // spread over the first 12 buckets.
-    const BOUNDS: &[u64] = &[
-        10, 20, 50, 100, 200, 500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000, 200_000,
-        500_000, 1_000_000, 2_000_000, 5_000_000, 10_000_000,
-    ];
+    // Histograms: the latency preset's 81 bounds (Renard's R10 from 1 µs to 100 s, in
+    // ns), with values spread over the first 46 buckets.
+    const BOUNDS: &[u64] = &{
+        const R10: [u64; 10] = [100, 125, 160, 200, 250, 315, 400, 500, 630, 800];
+        let mut bounds = [0; 81];
+        let mut i = 0;
+        while i < bounds.len() {
+            bounds[i] = R10[i % 10] * 10u64.pow((i / 10) as u32 + 1);
+            i += 1;
+        }
+        bounds
+    };
     let spread = || {
         let mut v = 0u64;
         move || {
-            v = (v + 7_919) % 30_000;
+            v = (v + 7_919_000) % 30_000_000;
             black_box(v)
         }
     };
@@ -231,7 +237,7 @@ fn main() {
         .meter("bench-sdk")
         .f64_histogram("timed")
         .with_unit("s")
-        .with_boundaries(BOUNDS.iter().map(|&b| b as f64 / 1e6).collect())
+        .with_boundaries(BOUNDS.iter().map(|&b| b as f64 / 1e9).collect())
         .build();
     case("OTel SDK bound latency timer", &threads, SLOW, || {
         let bound = sdk_latency.bind(&attrs);

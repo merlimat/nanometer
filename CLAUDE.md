@@ -36,8 +36,8 @@ let depth = meter.histogram(DEPTH, &attrs);                 // LocalHistogram: !
 depth.record(v);
 let size = meter.histogram(HistogramDef::bytes("payload"), &attrs); // presets: bytes, counts
 
-let lat = meter.latency("put_latency", &attrs);            // LocalLatency: fixed 1-2-5
-let _t = lat.start();                                      // buckets 10 µs–10 s, quanta
+let lat = meter.latency("put_latency", &attrs);            // LocalLatency: fixed R10
+let _t = lat.start();                                      // buckets 1 µs–100 s, quanta
                                                            // ticks in, seconds out; Timer
                                                            // records on drop (.stop/.discard)
 
