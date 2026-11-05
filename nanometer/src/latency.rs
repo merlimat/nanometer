@@ -93,8 +93,9 @@ struct Ticks {
     /// `LATENCY_BUCKETS_NS` in ticks.
     buckets: Box<[u64]>,
     /// Sums are kept in units of `1 << sum_shift` ticks, the largest power of two
-    /// within a microsecond, so that a `u64` sum lasts as long as one in µs would. At
-    /// 1 GHz, a sum of ticks would overflow within a year on a busy core.
+    /// within the first bound, 100 ns, so each record rounds down by less than that.
+    /// A `u64` sum of such units, 50 to 100 ns, lasts about three years at an average
+    /// of 10,000 operations in flight on one series; one of 1 GHz ticks, three weeks.
     sum_shift: u32,
     ticks_per_ns: f64,
 }
@@ -115,7 +116,7 @@ fn ticks() -> &'static Ticks {
         Ticks {
             clock,
             buckets,
-            sum_shift: to_ticks(1_000).checked_ilog2().unwrap_or(0),
+            sum_shift: to_ticks(100).checked_ilog2().unwrap_or(0),
             ticks_per_ns,
         }
     })

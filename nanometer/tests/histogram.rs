@@ -180,9 +180,24 @@ fn latency_exports_seconds() {
     counts[44] = 1;
     counts[45] = 1;
     assert_eq!(point.counts, counts);
-    // Each record rounds down to the sum's unit, at most a microsecond.
+    // Each record rounds down to the sum's unit, at most 100 ns.
     let error = 1_050.003_015_3 - point.sum;
-    assert!((0.0..5e-6).contains(&error), "{}", point.sum);
+    assert!((0.0..5e-7).contains(&error), "{}", point.sum);
+}
+
+#[test]
+fn latencies_under_a_microsecond_add_to_the_sum() {
+    let (provider, reader) = setup();
+    let scope = "latencies_under_a_microsecond_add_to_the_sum";
+    let latency = Meter::new(&provider, scope).latency("get_latency", &[]);
+    for _ in 0..1_000 {
+        latency.record(Duration::from_nanos(300));
+    }
+
+    let point = &collect(&reader, scope, "get_latency").unwrap().points[0];
+    // Each record rounds down to the sum's unit, at most 100 ns.
+    let error = 300e-9 - point.sum / point.count as f64;
+    assert!((0.0..100e-9).contains(&error), "{}", point.sum);
 }
 
 #[test]
@@ -198,9 +213,9 @@ fn timer_records_on_drop_and_stop_but_not_discard() {
 
     let point = &collect(&reader, scope, "op_latency").unwrap().points[0];
     assert_eq!(point.count, 2);
-    // Records round down to the sum's unit, at most a microsecond.
+    // Records round down to the sum's unit, at most 100 ns.
     assert!(
-        point.sum > elapsed.as_secs_f64() - 1e-6,
+        point.sum > elapsed.as_secs_f64() - 1e-7,
         "{} {elapsed:?}",
         point.sum
     );

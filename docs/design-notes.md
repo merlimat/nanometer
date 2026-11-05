@@ -141,11 +141,12 @@ values still finds it; one that names a 2 or a 5, an SLO at 50 ms say, doesn't.
 - **Ceiling, 63 s.** The first R5 bound past 50 s. A client that gives a server 10 s to
   answer takes a little more for an operation that runs into that timeout, past 0.1's
   last bound. Ending at 40 s would save a series, at 100 s cost one.
-- **The sum is coarser than the floor.** It counts in units of the largest power of two
-  of ticks within a µs, 0.5 to 1 µs (512 ns on the M5), so that a `u64` sum lasts as
-  long as one in µs would, and each record rounds down to the unit. A value under the
-  unit adds nothing: on the M5, 1,000 records of 300 ns export a mean of 0, and of
-  2 µs a mean of 1.54 µs. The buckets, and the quantiles from them, don't depend on it.
+- **Sum.** It counts in units of the largest power of two of ticks within 100 ns, 50 to
+  100 ns (64 ns on the M5), and each record rounds down to the unit, so a mean reads
+  at most one unit low: on the M5, 1,000 records of 300 ns export a mean of 256 ns,
+  and of 2 µs a mean of 1.98 µs. 0.1's unit was the largest within a µs, under which
+  those read 0 and 1.54 µs. A `u64` sum lasts 8 to 16 times less than one of 0.1's
+  units: about three years at an average of 10,000 operations in flight on one series.
 - **Cost.** The bucket lookup is `partition_point`, a branchless binary search: 6 steps
   instead of 5, about 0.2 ns more per record on the M5 Pro (below). Each handle holds
   47 cells instead of 21: 376 B, within a regular arena chunk (512 B), instead of
