@@ -124,41 +124,57 @@ as anything from 0 to its bound.
 
 nanometer 0.1's latency preset was 1-2-5 from 10 µs to 10 s, 19 bounds 2 to 2.5 times
 apart: a 3 ms max read as 5 ms, and an operation of a few µs as anything up to 10 µs.
-It is now Renard's R10 from 1 µs to 100 s, 81 bounds each 1.25 to 1.28 times the last,
-so an estimate is within 1.28 times the true value. They include all of 0.1's bounds,
-so a query that names one of its `le` values, an SLO threshold say, still finds it.
+It is now Renard's R5 from 100 ns to 63 s, 45 bounds each 1.56 to 1.6 times the last,
+so an estimate is within 1.6 times the true value: a 3 ms max reads as 4 ms. Of 0.1's
+bounds, the powers of ten are still bounds, so a query that names one of those `le`
+values still finds it; one that names a 2 or a 5, an SLO at 50 ms say, doesn't.
 
-- **Floor, 1 µs.** An operation served from memory, such as a cached lookup, can take
-  a few µs. Below 1 µs the timer itself costs 27–50 ns on server CPUs, and Apple's
-  24 MHz counter ticks every 42 ns: bounds of 125 and 160 ns would be the same tick.
-- **Ceiling, 100 s.** A client that gives a server 10 s to answer takes more than 10 s
-  for an operation that runs into that timeout, past 0.1's last bound. 81 bounds take
-  as many search steps as 71, so the extra decade costs no time.
-- **Cost.** The bucket lookup is `partition_point`, a branchless binary search: 7 steps
-  instead of 5, about 0.5 ns more per record on an idle M5 Pro (below). Each handle
-  holds 83 cells instead of 21: 664 B, in an arena chunk of its own (768 B), instead
-  of 168 B. Each exported point carries 82 buckets instead of 20, so a backend that
-  stores Prometheus-style buckets keeps 84 series per histogram series instead of 22.
+- **Not R10.** Ten per decade (1, 1.25, 1.6, 2, 2.5, 3.15, 4, 5, 6.3, 8) from 1 µs to
+  100 s reads within 1.28 times and keeps all of 0.1's bounds, but takes 81 bounds. A
+  backend that stores Prometheus-style buckets keeps a series per bucket, plus `_sum`
+  and `_count`: 84 per histogram series, against 48 for R5 and 22 for 0.1.
+- **Floor, 100 ns.** An operation served from memory, such as a cached get, can take a
+  few hundred ns. A measurement includes about one counter read: under a nanosecond on
+  Apple silicon, 8–13 ns on the server CPUs measured. Apple's counter moves every
+  42 ns (its timebase is 24 MHz; the M5's counter reads in ns, in steps of about 42),
+  and each bucket from 100 ns up spans at least one step.
+- **Ceiling, 63 s.** The first R5 bound past 50 s. A client that gives a server 10 s to
+  answer takes a little more for an operation that runs into that timeout, past 0.1's
+  last bound. Ending at 40 s would save a series, at 100 s cost one.
+- **The sum is coarser than the floor.** It counts in units of the largest power of two
+  of ticks within a µs, 0.5 to 1 µs (512 ns on the M5), so that a `u64` sum lasts as
+  long as one in µs would, and each record rounds down to the unit. A value under the
+  unit adds nothing: on the M5, 1,000 records of 300 ns export a mean of 0, and of
+  2 µs a mean of 1.54 µs. The buckets, and the quantiles from them, don't depend on it.
+- **Cost.** The bucket lookup is `partition_point`, a branchless binary search: 6 steps
+  instead of 5, about 0.2 ns more per record on the M5 Pro (below). Each handle holds
+  47 cells instead of 21: 376 B, within a regular arena chunk (512 B), instead of
+  168 B. Each exported point carries 46 buckets instead of 20.
 - **A slower or busier core hides less of the search.** Each step waits for the
-  previous step's load. On the M5's 12 Performance cores, the slower of its two kinds
-  (forced with background QoS), a record took about 17 ns instead of 13 with 19
-  bounds, against 3.0 and 2.5 ns on its 6 Super cores. While other builds loaded the
-  machine (load average 5 to 15), the histogram row of `benches/record.rs` varied
-  from 3.1 to 7.1 ns per record from one run to the next, where 19 bounds held at
-  2.5 ns; the timer, which always records into the first bucket, held at 3.3 ns. That
-  row records back to back, the worst case for a long chain; one record per request
-  overlaps it with other work.
+  previous step's load. With R10's 81 bounds, on the M5's 12 Performance cores, the
+  slower of its two kinds (forced with background QoS), a record took about 17 ns
+  instead of 13 with 19 bounds, against 3.0 and 2.5 ns on its 6 Super cores; and
+  while other builds loaded the machine (load average 5 to 15), the histogram row of
+  `benches/record.rs` varied from 3.1 to 7.1 ns per record from one run to the next,
+  where 19 bounds held at 2.5 ns and the timer, which always records into the first
+  bucket, at 3.3 ns. With R5's 45 bounds, under a load average of 7 to 28, that row
+  stayed 0.12 to 0.23 ns above 19 bounds in 6 of 7 alternating runs. It records back
+  to back, the worst case for a long chain; one record per request overlaps it with
+  other work.
 
 `LocalHistogram::record` on one thread of the M5 Pro, ns per record, the same compiled
-loop over each table (median of three runs; the generator alone costs 2.24 ns, the
-array read 0.22 ns):
+loop over each table (median of nine runs in three batches, while other work kept the
+load average between 7 and 28, so compare rows rather than figures; the generator
+alone costs 2.39 ns, the array read 0.25 ns):
 
 | Bounds | Search steps | Values from the bench's generator, 0–30 ms | Values from an array, 0.5 µs–200 s log-uniform |
 |---|---:|---:|---:|
-| 1-2-5, 10 µs–10 s (19) | 5 | 2.40 | 1.82 |
-| R10, 10 µs–10 s (61) | 6 | 2.59 | 2.05 |
-| R10, 1 µs–10 s (71) | 7 | 2.87 | 2.49 |
-| R10, 1 µs–100 s (81) | 7 | 2.86 | 2.47 |
+| 1-2-5, 10 µs–10 s (19) | 5 | 2.61 | 2.03 |
+| R5, 100 ns–63 s (45) | 6 | 2.84 | 2.26 |
+| R10, 1 µs–100 s (81) | 7 | 3.22 | 2.69 |
+
+On an idle machine the same loop took 2.40 and 1.82 ns with 19 bounds, 2.59 and
+2.05 ns with R10 from 10 µs to 10 s (61 bounds, 6 steps), and 2.86 and 2.47 ns with 81.
 
 ## Sources
 

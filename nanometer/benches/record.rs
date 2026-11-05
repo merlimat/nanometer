@@ -180,14 +180,14 @@ fn main() {
         move || sdk.add(1, black_box(attrs))
     });
 
-    // Histograms: the latency preset's 81 bounds (Renard's R10 from 1 µs to 100 s, in
-    // ns), with values spread over the first 46 buckets.
+    // Histograms: the latency preset's 45 bounds (Renard's R5 from 100 ns to 63 s, in
+    // ns), with values spread over the first 29 buckets.
     const BOUNDS: &[u64] = &{
-        const R10: [u64; 10] = [100, 125, 160, 200, 250, 315, 400, 500, 630, 800];
-        let mut bounds = [0; 81];
+        const R5: [u64; 5] = [10, 16, 25, 40, 63];
+        let mut bounds = [0; 45];
         let mut i = 0;
         while i < bounds.len() {
-            bounds[i] = R10[i % 10] * 10u64.pow((i / 10) as u32 + 1);
+            bounds[i] = R5[i % 5] * 10u64.pow((i / 5) as u32 + 1);
             i += 1;
         }
         bounds

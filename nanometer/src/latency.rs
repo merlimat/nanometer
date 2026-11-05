@@ -25,17 +25,16 @@ use crate::histogram::{HistogramDef, LocalHistogram};
 #[cfg(not(miri))]
 use quanta::Clock;
 
-/// Renard's R10 numbers, times 100: ten per decade, each 1.25 to 1.28 times the last.
-const R10: [u64; 10] = [100, 125, 160, 200, 250, 315, 400, 500, 630, 800];
+/// Renard's R5 numbers, times 10: five per decade, each 1.56 to 1.6 times the last.
+const R5: [u64; 5] = [10, 16, 25, 40, 63];
 
-/// R10 from 1 µs to 100 s, in ns: 1, 1.25, 1.6, 2, 2.5, 3.15, 4, 5, 6.3, 8, 10 µs …
-/// 80, 100 s. They include the 1-2-5 bounds of nanometer 0.1, 10 µs to 10 s.
+/// R5 over nine decades, in ns: 100, 160, 250, 400, 630 ns, 1, 1.6 µs … 25, 40, 63 s.
 const LATENCY_BUCKETS_NS: &[u64] = &{
-    let mut bounds = [0; 81];
+    let mut bounds = [0; 45];
     let mut i = 0;
     while i < bounds.len() {
-        // 1 µs is 100 × 10 ns.
-        bounds[i] = R10[i % 10] * 10u64.pow((i / 10) as u32 + 1);
+        // 100 ns is 10 × 10 ns.
+        bounds[i] = R5[i % 5] * 10u64.pow((i / 5) as u32 + 1);
         i += 1;
     }
     bounds
@@ -43,9 +42,9 @@ const LATENCY_BUCKETS_NS: &[u64] = &{
 
 /// Name and description of a latency histogram.
 ///
-/// The buckets are fixed: ten per decade from 1 µs to 100 s, Renard's R10 numbers
-/// (1, 1.25, 1.6, 2, 2.5, 3.15, 4, 5, 6.3, 8, 10 µs … 80, 100 s), so each bound is
-/// at most 1.28 times the one before. Latencies are timed with the CPU's counter,
+/// The buckets are fixed: five per decade from 100 ns to 63 s, Renard's R5 numbers
+/// (100, 160, 250, 400, 630 ns, 1, 1.6 µs … 25, 40, 63 s), so each bound is at most
+/// 1.6 times the one before. Latencies are timed with the CPU's counter,
 /// through [quanta], and exported in seconds, unit `s`, as the OpenTelemetry semantic
 /// conventions do for durations. `&str` converts into a definition without a
 /// description.
@@ -266,21 +265,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn latency_buckets_are_r10_from_1_us_to_100_s() {
+    fn latency_buckets_are_r5_from_100_ns_to_63_s() {
         let bounds = LATENCY_BUCKETS_NS;
-        assert_eq!(bounds.len(), 81);
-        assert_eq!((bounds[0], bounds[80]), (1_000, 100_000_000_000));
-        assert_eq!(
-            bounds[10..20],
-            [
-                10_000, 12_500, 16_000, 20_000, 25_000, 31_500, 40_000, 50_000, 63_000, 80_000
-            ]
-        );
-        // Each bound at most 1.28 times the one before.
-        assert!(bounds.windows(2).all(|w| w[1] * 100 <= w[0] * 128));
-        // nanometer 0.1's bounds, 1-2-5 from 10 µs to 10 s, are all still bounds, so
-        // queries that name their `le` keep working.
-        let old = (4..10).flat_map(|e| [1, 2, 5].map(|m| m * 10u64.pow(e)));
-        assert!(old.chain([10_000_000_000]).all(|b| bounds.contains(&b)));
+        assert_eq!(bounds.len(), 45);
+        assert_eq!((bounds[0], bounds[44]), (100, 63_000_000_000));
+        assert_eq!(bounds[10..15], [10_000, 16_000, 25_000, 40_000, 63_000]);
+        // Each bound at most 1.6 times the one before.
+        assert!(bounds.windows(2).all(|w| w[1] * 10 <= w[0] * 16));
+        // Of nanometer 0.1's bounds, 1-2-5 from 10 µs to 10 s, the powers of ten are
+        // still bounds: queries that name one of those `le` values keep working.
+        assert!((4..11).all(|e| bounds.contains(&10u64.pow(e))));
     }
 }
