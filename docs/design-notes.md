@@ -159,9 +159,11 @@ values still finds it; one that names a 2 or a 5, an SLO at 50 ms say, doesn't.
   `benches/record.rs` varied from 3.1 to 7.1 ns per record from one run to the next,
   where 19 bounds held at 2.5 ns and the timer, which always records into the first
   bucket, at 3.3 ns. With R5's 45 bounds, under a load average of 7 to 28, that row
-  stayed 0.12 to 0.23 ns above 19 bounds in 6 of 7 alternating runs. It records back
-  to back, the worst case for a long chain; one record per request overlaps it with
-  other work.
+  stayed 0.12 to 0.23 ns above 19 bounds in 6 of 7 alternating runs. On GitHub's
+  Neoverse-N2 runners, one thread's record took 6.6 ns with 45 bounds in November
+  against 5.6 with 19 in October, where the counter (1.8 ns) and the timer (27 ns)
+  didn't move. That row records back to back, the worst case for a long chain; one
+  record per request overlaps it with other work.
 
 `LocalHistogram::record` on one thread of the M5 Pro, ns per record, the same compiled
 loop over each table (median of nine runs in three batches, while other work kept the
