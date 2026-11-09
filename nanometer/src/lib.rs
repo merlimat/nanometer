@@ -33,6 +33,9 @@
 //! with any provider. Histograms
 //! export through [`Producer`], registered with the app's reader, which needs the
 //! `sdk` feature and an OTel SDK with `MetricProducer` support.
+//!
+//! [`trace`] records sampled spans on the hot path in the same way, and exports them
+//! through an OTel SDK `SpanExporter` with the `sdk-trace` feature.
 
 mod arena;
 mod counter;
@@ -43,6 +46,7 @@ mod latency;
 mod producer;
 mod registry;
 mod series;
+pub mod trace;
 
 pub use counter::{CounterDef, LocalCounter, LocalUpDownCounter, UpDownCounterDef};
 pub use gauge::{Gauge, GaugeDef, ObservableGauge};
@@ -126,5 +130,12 @@ impl Meter {
     /// resolved as for [`counter`](Meter::counter).
     pub fn latency(&self, def: impl Into<LatencyDef>, attributes: &[KeyValue]) -> LocalLatency {
         LocalLatency::new(self, def.into(), attributes)
+    }
+
+    /// A span recorder for the calling thread or core, whose spans export with this
+    /// meter's scope and whose dropped spans count in its counter
+    /// `nanometer.spans.dropped`. Allocates its slab and ring here, once.
+    pub fn span_recorder(&self, capacity: trace::SpanCapacity) -> trace::SpanRecorder {
+        trace::SpanRecorder::new(self, capacity)
     }
 }

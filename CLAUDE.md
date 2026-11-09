@@ -87,6 +87,17 @@ let shared = meter.shared_counter("requests", &attrs);     // Send + Sync, strip
   `otel.metric.overflow=true`, as OTel does.
 - **No `Context` on the record path, no exemplars.**
 
+## Span recording (user, Nov 9)
+
+`nanometer::trace` records sampled OTel spans for redwood the way metrics are recorded:
+a `!Send` `SpanRecorder` per core (`meter.span_recorder(capacity)`), spans in progress
+in a preallocated slab addressed by `ActiveSpan` (`NonZeroU32`: slot + generation),
+finished spans copied into a per-recorder SPSC ring, all rings in a process-wide list
+that `trace::drain` empties. Dropped spans count in `nanometer.spans.dropped{reason}`.
+Export: `trace::Collector` (feature `sdk-trace`, works with the crates.io SDK, no
+patch) builds `SpanData` for any `SpanExporter`. Sampling, IDs and propagation stay in
+the application. Rationale and costs: `docs/design-notes.md` section 8.
+
 ## Histogram export — the blocker
 
 Counters, up-down counters and gauges export through observable instruments and work with

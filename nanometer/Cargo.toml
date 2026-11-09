@@ -24,7 +24,10 @@ opentelemetry_sdk = { version = "=0.33.1", features = [
     "experimental_metrics_custom_reader",
     # Bound counters, the SDK's fastest path, as a baseline in benches/record.rs.
     "experimental_metrics_bound_instruments",
+    "trace",
 ] }
+# Drives the async SpanExporter in the trace::Collector example, as the SDK does.
+futures-executor = "0.3"
 
 [[bench]]
 name = "record"
@@ -40,3 +43,7 @@ internal-logs = ["opentelemetry/internal-logs"]
 # `experimental_metrics_producer` feature (README, "Exporting histograms"): naming
 # that feature here would break publishing, since the crates.io release lacks it.
 sdk = ["dep:opentelemetry_sdk"]
+# Span export through `trace::Collector`, to an OTel SDK `SpanExporter` such as OTLP's.
+# Enable it in the app; recording spans needs no feature. Unlike `sdk`, it works with
+# the SDK release on crates.io.
+sdk-trace = ["dep:opentelemetry_sdk", "opentelemetry/trace", "opentelemetry_sdk/trace"]

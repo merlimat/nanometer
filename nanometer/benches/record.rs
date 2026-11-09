@@ -13,7 +13,8 @@
 // limitations under the License.
 
 //! Record-path cost of nanometer's counter against the OTel SDK and plain atomics, in
-//! ns/op and heap allocations/op, on one thread and on several: `cargo bench`.
+//! ns/op and heap allocations/op, on one thread and on several: `cargo bench`. Also
+//! the cost of recording a sampled span.
 //!
 //! Every thread records into the same series, with three attributes, through its own
 //! handle, after a warm-up, and all threads start timing together. ns/op is the mean
@@ -24,15 +25,19 @@ use std::cell::Cell;
 use std::hint::black_box;
 use std::process::Command;
 use std::sync::Barrier;
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{env, fs};
 
+use nanometer::trace::{self, SpanCapacity, SpanStart};
 use nanometer::{HistogramDef, Meter};
-use opentelemetry::KeyValue;
 use opentelemetry::metrics::MeterProvider as _;
+use opentelemetry::trace::{Span as _, SpanKind, Tracer as _, TracerProvider as _};
+use opentelemetry::{KeyValue, SpanId, TraceFlags, TraceId};
+use opentelemetry_sdk::error::OTelSdkResult;
 use opentelemetry_sdk::metrics::{ManualReader, SdkMeterProvider};
+use opentelemetry_sdk::trace::{SdkTracerProvider, SpanData, SpanExporter};
 use quanta::Clock;
 
 /// Counts heap allocations per thread, so each thread sees only its own.
@@ -63,6 +68,17 @@ unsafe impl GlobalAlloc for CountingAlloc {
 
 #[global_allocator]
 static GLOBAL: CountingAlloc = CountingAlloc;
+
+/// Takes the SDK's spans and does nothing with them.
+#[derive(Debug)]
+struct NoopExporter;
+
+impl SpanExporter for NoopExporter {
+    async fn export(&self, batch: Vec<SpanData>) -> OTelSdkResult {
+        black_box(batch);
+        Ok(())
+    }
+}
 
 // Calls per thread, by the expected cost of one call.
 const FAST: u64 = 100_000_000;
@@ -112,6 +128,25 @@ where
     for &t in threads {
         let (ns, allocs) = run(t, iters, &setup);
         println!("{name:<40} {t:>7} {ns:>9.2} {allocs:>9.2}");
+    }
+}
+
+/// As `case`, for spans: `drained` counts the spans a draining thread took meanwhile,
+/// and the share of spans dropped on a full ring is printed after the allocations.
+fn span_case<S, F>(name: &str, threads: &[usize], iters: u64, drained: &AtomicU64, setup: S)
+where
+    S: Fn() -> F + Sync,
+    F: FnMut(),
+{
+    for &t in threads {
+        let before = drained.load(Relaxed);
+        let (ns, allocs) = run(t, iters, &setup);
+        // What the drainer hasn't taken yet: the recorders are gone, their spans stay.
+        let rest = trace::drain(usize::MAX, |_, _| {});
+        let taken = drained.load(Relaxed) - before + rest as u64;
+        let total = t as u64 * (iters + iters / 10);
+        let dropped = 100.0 * (total - taken) as f64 / total as f64;
+        println!("{name:<40} {t:>7} {ns:>9.2} {allocs:>9.2} {dropped:>8.1}% dropped");
     }
 }
 
@@ -244,6 +279,93 @@ fn main() {
         move || {
             let start = black_box(Instant::now());
             bound.record(start.elapsed().as_secs_f64());
+        }
+    });
+
+    // Spans: each thread records into its own recorder, as a core would, and one more
+    // thread drains every recorder's ring every 50 µs, as an exporter would, if less
+    // often. A thread that outpaces the drainer fills its ring and drops spans, which
+    // skips the copy into the ring: the dropped share shows how much of a row that is.
+    let stop = AtomicBool::new(false);
+    let drained = AtomicU64::new(0);
+    thread::scope(|s| {
+        s.spawn(|| {
+            while !stop.load(Relaxed) {
+                let n = trace::drain(usize::MAX, |_, record| {
+                    black_box(record.span_id());
+                });
+                drained.fetch_add(n as u64, Relaxed);
+                // Sleeping is too coarse for this; spinning keeps the period.
+                let now = Instant::now();
+                while now.elapsed() < Duration::from_micros(50) {
+                    std::hint::spin_loop();
+                }
+            }
+        });
+        let capacity = SpanCapacity {
+            active: 16,
+            finished: 1 << 13,
+        };
+        span_case(
+            "nanometer span, 2 events",
+            &threads,
+            MEDIUM,
+            &drained,
+            || {
+                let spans = meter.span_recorder(capacity);
+                let mut n = 0u64;
+                move || {
+                    n += 1;
+                    let start = SpanStart::new("append", TraceId::from(n as u128), SpanId::from(n))
+                        .parent(SpanId::from(1));
+                    let span = spans.start(black_box(start)).unwrap();
+                    spans.event(span, "queued");
+                    spans.event(span, "written");
+                    spans.end(span);
+                }
+            },
+        );
+        span_case(
+            "nanometer span, + 2 attributes, 1 link",
+            &threads,
+            MEDIUM,
+            &drained,
+            || {
+                let spans = meter.span_recorder(capacity);
+                let mut n = 0u64;
+                move || {
+                    n += 1;
+                    let start = SpanStart::new("append", TraceId::from(n as u128), SpanId::from(n))
+                        .parent(SpanId::from(1));
+                    let span = spans.start(black_box(start)).unwrap();
+                    spans.attribute(span, "records", n);
+                    spans.attribute(span, "topic", "events");
+                    spans.link(span, TraceId::from(7), SpanId::from(n), TraceFlags::SAMPLED);
+                    spans.event(span, "queued");
+                    spans.event(span, "written");
+                    spans.end(span);
+                }
+            },
+        );
+        stop.store(true, Relaxed);
+    });
+
+    // The SDK's way: a sampled span through its batch processor, which hands finished
+    // spans to its own thread over a channel, and drops them when its queue is full.
+    let tracer_provider = SdkTracerProvider::builder()
+        .with_batch_exporter(NoopExporter)
+        .build();
+    let tracer = tracer_provider.tracer("bench-sdk");
+    case("OTel SDK span, 2 events", &threads, SLOW, || {
+        let tracer = &tracer;
+        move || {
+            let mut span = tracer
+                .span_builder("append")
+                .with_kind(SpanKind::Internal)
+                .start(tracer);
+            span.add_event("queued", Vec::new());
+            span.add_event("written", Vec::new());
+            span.end();
         }
     });
 }
