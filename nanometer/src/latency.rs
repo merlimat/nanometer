@@ -23,7 +23,7 @@ use crate::Meter;
 use crate::histogram::{HistogramDef, LocalHistogram};
 
 #[cfg(not(miri))]
-use quanta::Clock;
+pub(crate) use quanta::Clock;
 
 /// Renard's R5 numbers, times 10: five per decade, each 1.56 to 1.6 times the last.
 const R5: [u64; 5] = [10, 16, 25, 40, 63];
@@ -88,8 +88,8 @@ impl From<&'static str> for LatencyDef {
 }
 
 /// The clock latency handles read, and the bounds they compare ticks against.
-struct Ticks {
-    clock: Clock,
+pub(crate) struct Ticks {
+    pub(crate) clock: Clock,
     /// `LATENCY_BUCKETS_NS` in ticks.
     buckets: Box<[u64]>,
     /// Sums are kept in units of `1 << sum_shift` ticks, the largest power of two
@@ -97,14 +97,14 @@ struct Ticks {
     /// A `u64` sum of such units, 50 to 100 ns, lasts about three years at an average
     /// of 10,000 operations in flight on one series; one of 1 GHz ticks, three weeks.
     sum_shift: u32,
-    ticks_per_ns: f64,
+    pub(crate) ticks_per_ns: f64,
 }
 
 static TICKS: OnceLock<Ticks> = OnceLock::new();
 
 /// The first call calibrates quanta's clock, which blocks for 10 to 200 ms, once per
 /// process.
-fn ticks() -> &'static Ticks {
+pub(crate) fn ticks() -> &'static Ticks {
     TICKS.get_or_init(|| {
         let clock = Clock::new();
         // quanta converts ticks to ns; invert it over a long span to go the other way.
@@ -240,7 +240,7 @@ impl fmt::Debug for Timer<'_> {
 /// `Instant`.
 #[cfg(miri)]
 #[derive(Clone, Debug)]
-struct Clock(std::time::Instant);
+pub(crate) struct Clock(std::time::Instant);
 
 #[cfg(miri)]
 impl Clock {
@@ -248,7 +248,7 @@ impl Clock {
         Clock(std::time::Instant::now())
     }
 
-    fn raw(&self) -> u64 {
+    pub(crate) fn raw(&self) -> u64 {
         self.0.elapsed().as_nanos() as u64
     }
 

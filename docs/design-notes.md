@@ -179,6 +179,104 @@ alone costs 2.39 ns, the array read 0.25 ns):
 On an idle machine the same loop took 2.40 and 1.82 ns with 19 bounds, 2.59 and
 2.05 ns with R10 from 10 µs to 10 s (61 bounds, 6 steps), and 2.86 and 2.47 ns with 81.
 
+## 8. Span recording
+
+Added Nov 9, 2026, for redwood, a thread-per-core log store on compio that records
+its metrics with nanometer and wants OpenTelemetry tracing too: free when off, and
+cheap enough to sample 5% of appends in production. Volume to design for: up to
+~350k spans/s per node in the worst case (1M records/s, one record per batch, 5%,
+RF=3), more typically 35k/s or less. Spans live in nanometer because the shape is
+the metrics' shape: each core records into memory of its own, with no lock and no
+allocation, and an exporter collects.
+
+- **Not `tracing` + `tracing-opentelemetry`.** Most of a span's cost (the
+  registry's slab insert, its extensions, allocation) is paid even for a span that
+  isn't sampled.
+- **Not the SDK's `Tracer`.** It allocates every span, and its `BatchSpanProcessor`
+  sends finished spans through one channel that every thread shares. Measured below:
+  127 ns and one allocation per span on one thread, 3.4 µs on 18.
+- **Sampling, IDs and propagation stay in the application.** nanometer records the
+  spans it is given; it doesn't decide which, and never sees a `traceparent`.
+
+Layout:
+
+- **`SpanRecord`, 784 B, `Copy`, no heap data.** IDs (OTel's `TraceId`, `SpanId`,
+  `TraceFlags`, which the API crate has without its `trace` feature), kind, status,
+  a `&'static str` name, start and end in quanta ticks, and fixed arrays: 8
+  attributes (`u64`/`i64`/`bool`/`&'static str`, 40 B each), 4 events (name and
+  ticks, 24 B), 8 links (trace, span, flags: 32 B, as `TraceId` is a `u128`). More
+  are dropped and counted, and export as OTel's dropped counts. 8 links, more than
+  events, because a batch links the sampled requests it carries.
+- **Slab of spans in progress, per recorder, allocated up front.** A LIFO free list
+  of `u16` indices (capacity fixed, never grows). `ActiveSpan` is a `NonZeroU32`:
+  16 bits of slot, 16 of generation, so a handle used after its span ended is
+  ignored rather than writing into the slot's next span (until the generation wraps
+  after 65,535 reuses). Full slab: `start` returns `None` and counts.
+- **One SPSC ring of finished spans per recorder.** `head` and `tail` on separate
+  128 B lines; the producer keeps its own copy of `head` and a cached `tail`, read
+  again only when the ring looks full, so a push doesn't touch the consumer's line.
+  `end` copies the header and only the array entries in use (160 B for a span with
+  two events, rather than 784 B). Full ring: the span is dropped and counted.
+- **Process-wide list of rings**, as the metric registry is: a library needs only a
+  `Meter` to record spans, with the meter's scope as the spans' instrumentation
+  scope, and the app runs one collector for every library. Recorders take the lock
+  only when created or dropped; drains take it, which serializes consumers, so each
+  ring keeps a single consumer even with two collectors. A dropped recorder's ring
+  stays until drained. Drains limited by `max` resume at the next ring, round-robin.
+- **Drop counts are nanometer counters** (`nanometer.spans.dropped{reason}`) on the
+  recorder's meter: `LocalCounter`s, a load and a store when a span is dropped.
+- **Recorder methods take `&self`**, like the metric handles: the state sits in an
+  `UnsafeCell`, sound because the recorder is `!Sync` and `!Send` and no method calls
+  out while holding it. redwood keeps state in `Rc`/`RefCell` fields; `&self` lets it
+  share the recorder through an `Rc` without a `RefCell` borrow per call.
+
+Export:
+
+- **Ticks to wall time from an anchor**, a `SystemTime` paired with the middle of two
+  counter reads, taken afresh for each batch, with quanta's calibrated ticks per ns.
+  Spans are at most one drain interval older than their anchor, so wall-clock
+  adjustments in between don't matter; two batches may disagree by the slew between
+  their anchors, microseconds at most.
+- **`Collector` builds the SDK's `SpanData`** and calls any `SpanExporter`, in
+  batches of `max_batch` (512, the batch processor's default), and stops at the
+  first batch that isn't full so a busy core can't keep it going. Its
+  `SpanExporter::export` is async; a blocking caller uses `futures_executor::block_on`,
+  as the SDK's batch processor does.
+- **Feature `sdk-trace`, separate from `sdk`.** `SpanData` and `SpanExporter` are in
+  the SDK release on crates.io, so span export needs no patch, unlike `Producer`;
+  folding it into `sdk` would have required the fork for spans too. Recording needs
+  no feature.
+
+Cost, `benches/record.rs` on the Apple M5 Pro, one thread recording a span with a
+parent, two events and end, while another thread drains every ring every 50 µs
+(median of three runs; no span dropped, none allocates):
+
+| | ns per span |
+|---|---:|
+| nanometer, start + 2 events + end | 16.9 |
+| nanometer, + 2 attributes and 1 link | 16.8 |
+| nanometer, start + 2 events + discard (no ring push; two runs) | 6.1 |
+| OTel SDK `Tracer`, batch processor, 2 events | 127 (1 allocation) |
+
+Most of a span is the push: its three or four lines of ring were last read by the
+drainer's core, so writing them misses. On two threads a span takes 25–31 ns, not
+investigated (the M5 has two kinds of core, and two rings of 6 MiB each exceed more
+of the cache); on 18 the single drainer
+can't keep up with recorders that do nothing else, and over half the spans drop.
+Not yet measured on GitHub's x86 runners, where one read of the counter takes 9–13
+ns: a span with two events reads it four times, so expect 36–52 ns more there. At
+redwood's worst case, ~350k spans/s spread over its cores, a drainer thread has
+microseconds per span to spare.
+
+Open questions for redwood:
+
+- Attribute values are `&'static str` at most: a topic name has to be interned (as
+  attribute sets are, once, when a topic loads) or exported as a numeric ID.
+- 8 attributes, 4 events and 8 links per span: enough for the append, client put and
+  server put spans?
+- No `TraceState` on spans or links: redwood's 25 B of context carry none.
+- Span events have no attributes.
+
 ## Sources
 
 - opentelemetry-rust tags `opentelemetry_sdk-0.33.1`, `-0.30.0`, `-0.29.0`: SDK

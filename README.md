@@ -50,6 +50,9 @@ Early: the API is a draft and will change.
 - [x] Gauges: `Gauge`, set from any thread, and `ObservableGauge`, read from a callback
   at each export.
 - [ ] `Send + Sync` shared counter handles and a cardinality cap.
+- [x] Span recording: sampled OpenTelemetry spans recorded per core without locks or
+  allocation, exported through the OTel SDK's `SpanExporter`, such as OTLP's
+  ([Recording spans](#recording-spans)).
 
 ## Example
 
@@ -199,6 +202,81 @@ The producer exports every histogram in the process as a cumulative OTLP histogr
 With a pull exporter that has no producer hook, such as Prometheus's, push OTLP to a
 Collector or to Prometheus's OTLP receiver instead. docs.rs builds nanometer without
 the `sdk` feature, so `Producer` is documented here and in its source.
+
+## Recording spans
+
+`nanometer::trace` records sampled OpenTelemetry spans the same way: each core owns
+a `SpanRecorder`, and an exporter thread takes the finished spans from every core.
+nanometer records the spans it is given; sampling, trace and span IDs and context
+propagation stay with the application, which starts a span only for a request it
+sampled.
+
+A recorder is a plain value, kept as a field of the core's state, not a thread-local.
+Spans in progress live in a slab it allocates up front, addressed by an `ActiveSpan`:
+4 bytes, `Copy`, to carry in the application's own structs. A span is a fixed-size
+`SpanRecord` of 784 B, with no heap data: IDs, kind, a `&'static str` name, start and
+end in ticks of the CPU's counter (the latency timer's clock), status, up to 8
+attributes (`u64`, `i64`, `bool` or `&'static str` values), 4 events and 8 links.
+More are dropped and counted in the span, as OTel does. Ending a span copies it into
+a ring that only its recorder writes. Nothing on the way allocates or takes a lock.
+
+```rust
+use nanometer::trace::{SpanCapacity, SpanKind, SpanStart, Status};
+use opentelemetry::{SpanId, TraceFlags};
+
+// Once per core: 1,024 spans in progress, 4,096 finished, 3.8 MiB.
+let spans = meter.span_recorder(SpanCapacity::default());
+
+// A request the application sampled, with its trace and span IDs:
+let start = SpanStart::new("append", trace_id, span_id)
+    .remote_parent(client_span_id)
+    .kind(SpanKind::Server);
+if let Some(span) = spans.start(start) {
+    spans.attribute(span, "records", 12u64);
+    spans.link(span, other_trace_id, other_span_id, TraceFlags::SAMPLED);
+    spans.event(span, "written");
+    spans.status(span, Status::Ok);
+    spans.end(span);
+}
+```
+
+When the slab is full, `start` returns `None`; when the ring is full, `end` drops the
+span. Both count in the counter `nanometer.spans.dropped` of the recorder's meter,
+by `reason` (`active_full`, `finished_full`). A handle whose span has ended is
+ignored, even once its slot holds another span.
+
+The app exports the spans of every recorder in the process with
+`nanometer::trace::Collector`, through any OTel SDK `SpanExporter`. That takes the
+`sdk-trace` feature, in the app only, and works with the SDK from crates.io: it needs
+no patch.
+
+```toml
+[dependencies]
+nanometer = { version = "0.1", features = ["sdk-trace"] }
+```
+
+```rust
+let mut exporter = opentelemetry_otlp::SpanExporter::builder().with_http().build()?;
+exporter.set_resource(&resource);
+let collector = nanometer::trace::Collector::new(); // batches of up to 512 spans
+std::thread::spawn(move || loop {
+    std::thread::sleep(Duration::from_millis(100));
+    if let Err(err) = futures_executor::block_on(collector.export(&exporter)) {
+        eprintln!("span export failed: {err}");
+    }
+});
+```
+
+Drain often enough that no ring fills between two drains: at 20,000 spans per second
+on a core and a drain every 100 ms, the default ring of 4,096 holds twice what it
+needs. The collector converts the counter's ticks to wall time from an anchor, a
+wall-clock reading paired with a counter reading, taken afresh for each batch.
+`trace::drain` hands out the raw `SpanRecord`s instead, for an exporter of your own.
+
+A sampled span with a parent, two events and its end takes 17 ns on one thread of
+the M5 Pro, with another thread draining every ring every 50 µs, and allocates
+nothing; the SDK's `Tracer` with its batch processor takes 127 ns and an allocation
+for the same span (`benches/record.rs`; [details](docs/design-notes.md#8-span-recording)).
 
 ## Performance
 
