@@ -180,7 +180,7 @@ dependency:
 
 ```toml
 [dependencies]
-nanometer = { version = "0.1", features = ["sdk"] }
+nanometer = { version = "0.2", features = ["sdk"] }
 opentelemetry_sdk = { version = "=0.33.1", features = ["experimental_metrics_producer"] }
 
 # Patch both crates: patching only the SDK pulls in a second copy of the API crate.
@@ -252,7 +252,7 @@ no patch.
 
 ```toml
 [dependencies]
-nanometer = { version = "0.1", features = ["sdk-trace"] }
+nanometer = { version = "0.2", features = ["sdk-trace"] }
 ```
 
 ```rust
